@@ -1,5 +1,10 @@
 name: CI
 
+# Runs on PRs to main and on pushes to main.
+# Two jobs:
+#   lint-test  — linting + lightweight tests (no GPU required)
+#   typecheck  — mypy (optional, non-blocking for now)
+
 on:
   push:
     branches:
@@ -10,8 +15,71 @@ on:
   workflow_dispatch:
 
 jobs:
-  ci:
-    name: CI
-    uses: molssi-seamm/devops/.github/workflows/CI.yaml@main
-    with:
-      src: lammps_mdi
+  lint-test:
+    name: Lint & lightweight tests (ubuntu / Py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for setuptools-scm
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tools and linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 ruff
+
+      - name: Run linters
+        run: |
+          black --check --diff --extend-exclude '_version.py' src/lammps_mdi tests
+          flake8 src/lammps_mdi tests
+
+      - name: Install package (lightweight deps only — no torch/mace)
+        # torch, mace-torch, and pymdi are intentionally absent;
+        # runtime tests that need them are guarded with pytest.importorskip.
+        run: |
+          pip install pint matscipy
+          pip install --no-deps -e .
+
+      - name: Run lightweight tests
+        run: |
+          pip install pytest pytest-cov
+          pytest -v --cov=lammps_mdi --cov-report=xml --cov-report=term --color=yes tests/
+
+      - name: Upload coverage report
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-ubuntu-py${{ matrix.python-version }}
+        continue-on-error: true   # don't fail CI if codecov is down
+
+  typecheck:
+    name: mypy type checks
+    runs-on: ubuntu-latest
+    continue-on-error: true   # informational only until typing is complete
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install mypy and stubs
+        run: |
+          pip install mypy pint matscipy
+          pip install --no-deps -e .
+
+      - name: Run mypy (lightweight modules only)
+        run: |
+          mypy src/lammps_mdi/cuda_utils.py src/lammps_mdi/cli.py

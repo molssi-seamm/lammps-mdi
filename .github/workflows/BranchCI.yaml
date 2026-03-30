@@ -1,5 +1,10 @@
 name: BranchCI
 
+# Runs on pushes to any branch except main/master.
+# Uses pip (not conda) because lammps-mdi is designed for HPC Python
+# environments, not conda.  Only lightweight tests (no GPU, no torch)
+# are run here; the full runtime tests require an HPC system.
+
 on:
   push:
     branches-ignore:
@@ -7,8 +12,39 @@ on:
       - 'master'
 
 jobs:
-  branch-ci:
-    name: Branch CI
-    uses: molssi-seamm/devops/.github/workflows/BranchCI.yaml@main
-    with:
-      src: lammps_mdi
+  lint-and-test:
+    name: Lint & lightweight tests (ubuntu / Py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install build tools and linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install black flake8 ruff
+
+      - name: Run linters
+        run: |
+          black --check --diff --extend-exclude '_version.py' src/lammps_mdi tests
+          flake8 src/lammps_mdi tests
+
+      - name: Install package (lightweight deps only — no torch/mace)
+        # pymdi, mace-torch, and torch are intentionally excluded here;
+        # the tests that need them are guarded with pytest.importorskip.
+        run: |
+          pip install pint matscipy
+          pip install --no-deps -e .
+
+      - name: Run lightweight tests
+        run: |
+          pip install pytest pytest-cov
+          pytest -v --cov=lammps_mdi --cov-report=term --color=yes tests/
