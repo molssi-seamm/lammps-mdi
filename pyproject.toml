@@ -94,7 +94,7 @@ Homepage      = "https://github.com/molssi-seamm/lammps-mdi"
 Documentation = "https://lammps-mdi.readthedocs.io"
 Repository    = "https://github.com/molssi-seamm/lammps-mdi"
 "Bug Tracker" = "https://github.com/molssi-seamm/lammps-mdi/issues"
-Changelog     = "https://github.com/molssi-seamm/lammps-mdi/blob/main/CHANGES.md"
+Changelog     = "https://github.com/molssi-seamm/lammps-mdi/blob/main/HISTORY.md"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
