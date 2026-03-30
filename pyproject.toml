@@ -1,0 +1,121 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools-scm>=8"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "lammps-mdi"
+dynamic = ["version"]
+description = "MDI engine drivers for LAMMPS — MACE and other ML forcefields via MolSSI Driver Interface"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [
+    { name = "Paul Saxe", email = "psaxe@molssi.org" },
+]
+keywords = ["lammps", "mdi", "mace", "machine learning", "forcefield", "molecular dynamics"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: BSD License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: GPU :: NVIDIA CUDA",
+]
+
+# -----------------------------------------------------------------------
+# Core dependencies
+#
+# Intentionally ABSENT (must be pre-installed by the user or module system):
+#   torch    — install with the correct CUDA wheel first; see INSTALL.md
+#   numpy    — provided by the HPC module stack; must not be overridden
+#   mpi4py   — provided by the HPC module stack
+#
+# pymdi is the PyPI name for the MDI Python bindings (import mdi).
+# It is listed here so pip can verify it is present, but on systems where
+# it is provided by an EasyBuild/Spack module the user can ignore the warning.
+# -----------------------------------------------------------------------
+dependencies = [
+    # pymdi is the PyPI package name; it installs as "import mdi" (not "import pymdi").
+    # Version is exposed as mdi.MDI_MAJOR_VERSION etc., not mdi.__version__.
+    # pymdi is the PyPI package name; it installs as "import mdi" (not "import pymdi").
+    # Version is exposed as mdi.MDI_MAJOR_VERSION etc., not mdi.__version__.
+    "pymdi>=1.4",
+    "pint>=0.20",
+    "mace-torch>=0.3",
+    "matscipy>=0.8",
+]
+
+[project.optional-dependencies]
+# GPU-accelerated neighbor lists (strongly recommended for GPU runs)
+gpu = [
+    "vesin-torch>=0.3",
+]
+
+# NVIDIA cuEquivariance acceleration for MACE
+# Requires a compatible GPU and CUDA installation.
+# Install the ops package matching your CUDA version: cu11 or cu12.
+cueq = [
+    "cuequivariance>=0.3",
+    "cuequivariance-torch>=0.3",
+    # ops package — user must choose the right CUDA variant manually:
+    #   pip install cuequivariance-ops-torch-cu12
+    #   pip install cuequivariance-ops-torch-cu11
+]
+
+# Full GPU install: vesin + cuEquivariance (ops kernel must be added separately)
+gpu-full = [
+    "lammps-mdi[gpu]",
+    "lammps-mdi[cueq]",
+]
+
+# Development dependencies
+dev = [
+    "pytest>=7",
+    "pytest-xdist",
+    "black",
+    "ruff",
+    "sphinx",
+    "sphinx-rtd-theme",
+]
+
+[project.scripts]
+# Main engine entry points
+mace-mdi    = "lammps_mdi.mace_mdi:main"
+
+# Utility commands
+lammps-mdi  = "lammps_mdi.cli:main"
+
+[project.urls]
+Homepage      = "https://github.com/molssi-seamm/lammps-mdi"
+Documentation = "https://lammps-mdi.readthedocs.io"
+Repository    = "https://github.com/molssi-seamm/lammps-mdi"
+"Bug Tracker" = "https://github.com/molssi-seamm/lammps-mdi/issues"
+Changelog     = "https://github.com/molssi-seamm/lammps-mdi/blob/main/CHANGES.md"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lammps_mdi = ["scripts/*.sh"]
+
+[tool.setuptools_scm]
+# Derive package version from git tags (e.g. v0.1.0 -> 0.1.0)
+write_to = "src/lammps_mdi/_version.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]

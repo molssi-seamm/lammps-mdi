@@ -1,0 +1,12 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  codeql:
+    name: CodeQL
+    uses: molssi-seamm/devops/.github/workflows/CodeQL.yaml@main
