@@ -35,5 +35,6 @@ def __getattr__(name: str):
     needed at runtime when an engine is actually used."""
     if name == "MACEEngine":
         from .mace_mdi import MACEEngine  # noqa: PLC0415
+
         return MACEEngine
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

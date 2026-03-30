@@ -10,7 +10,6 @@ import subprocess
 import sys
 from typing import Optional
 
-
 # Map (cuda_major, cuda_minor_minimum) -> PyTorch wheel tag, newest first.
 # Update this table when new PyTorch CUDA builds are released.
 _CUDA_TO_TORCH_TAG = [
@@ -156,8 +155,11 @@ def print_environment_report() -> None:
     # Torch
     t = check_torch()
     if t["installed"]:
-        cuda_str = f"  (CUDA {t['cuda_version']}, {t['device_count']} device(s))" \
-                   if t["cuda_available"] else "  (CPU-only build)"
+        cuda_str = (
+            f"  (CUDA {t['cuda_version']}, {t['device_count']} device(s))"
+            if t["cuda_available"]
+            else "  (CPU-only build)"
+        )
         print(f"\ntorch:   {t['version']}{cuda_str}")
     else:
         print("\ntorch:   NOT INSTALLED")

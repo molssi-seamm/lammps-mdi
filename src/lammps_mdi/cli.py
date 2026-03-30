@@ -14,13 +14,14 @@ import shutil
 import sys
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Subcommand: check
 # ---------------------------------------------------------------------------
 
+
 def cmd_check(args) -> None:
     from .cuda_utils import print_environment_report
+
     print_environment_report()
 
 
@@ -56,7 +57,7 @@ def cmd_install_scripts(args) -> None:
             continue
 
         dst.write_bytes(content)
-        dst.chmod(dst.stat().st_mode | 0o111)   # ensure executable
+        dst.chmod(dst.stat().st_mode | 0o111)  # ensure executable
         installed.append(dst)
         print(f"  Installed: {dst}")
 
@@ -71,6 +72,7 @@ def cmd_install_scripts(args) -> None:
 # ---------------------------------------------------------------------------
 # Subcommand: install-torch
 # ---------------------------------------------------------------------------
+
 
 def cmd_install_torch(args) -> None:
     from .cuda_utils import (
@@ -116,14 +118,17 @@ def cmd_install_torch(args) -> None:
 # Subcommand: version
 # ---------------------------------------------------------------------------
 
+
 def cmd_version(args) -> None:
     from . import __version__
+
     print(f"lammps-mdi {__version__}")
 
 
 # ---------------------------------------------------------------------------
 # Main parser
 # ---------------------------------------------------------------------------
+
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(
@@ -143,7 +148,8 @@ def main(argv=None) -> None:
         help="Install bundled shell scripts (mdi_bind.sh, etc.) to a directory",
     )
     p_scripts.add_argument(
-        "--dir", "-d",
+        "--dir",
+        "-d",
         default="~/SEAMM/bin",
         metavar="DIR",
         help="Target directory (default: ~/SEAMM/bin)",

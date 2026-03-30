@@ -44,8 +44,8 @@ os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
 # Unit conversion factors
 _ureg = pint.UnitRegistry()
-Bohr = _ureg.Quantity(1, "bohr").to("angstrom").magnitude      # Bohr -> Å
-Hartree = _ureg.Quantity(1, "hartree").to("eV").magnitude      # Hartree -> eV
+Bohr = _ureg.Quantity(1, "bohr").to("angstrom").magnitude  # Bohr -> Å
+Hartree = _ureg.Quantity(1, "hartree").to("eV").magnitude  # Hartree -> eV
 
 
 # ---------------------------------------------------------------------------
@@ -54,6 +54,7 @@ Hartree = _ureg.Quantity(1, "hartree").to("eV").magnitude      # Hartree -> eV
 
 try:
     from vesin.torch import NeighborList as VesinNeighborList
+
     VESIN_AVAILABLE = True
 except ImportError:
     VESIN_AVAILABLE = False
@@ -68,12 +69,14 @@ if not VESIN_AVAILABLE:
 
 try:
     from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+
     CUEQ_AVAILABLE = True
 except (ImportError, ModuleNotFoundError):
     CUEQ_AVAILABLE = False
 
 try:
     from mace.cli.convert_e3nn_oeq import run as run_e3nn_to_oeq
+
     OEQ_AVAILABLE = True
 except (ImportError, ModuleNotFoundError):
     OEQ_AVAILABLE = False
@@ -82,6 +85,7 @@ except (ImportError, ModuleNotFoundError):
 # ---------------------------------------------------------------------------
 # CPU neighbor list (matscipy fallback)
 # ---------------------------------------------------------------------------
+
 
 def get_neighborhood_cpu(
     positions: np.ndarray,
@@ -136,6 +140,7 @@ def get_neighborhood_cpu(
 # MACEEngine
 # ---------------------------------------------------------------------------
 
+
 class MACEEngine:
     """MDI engine that runs a MACE model, communicating with LAMMPS via MDI.
 
@@ -167,9 +172,7 @@ class MACEEngine:
 
         model_dtype = next(model.parameters()).dtype
         if model_dtype != self.dtype:
-            logging.warning(
-                f"Model dtype {model_dtype} != requested {self.dtype}, converting."
-            )
+            logging.warning(f"Model dtype {model_dtype} != requested {self.dtype}, converting.")
             model = model.double() if self.dtype == torch.float64 else model.float()
 
         # ---- Apply acceleration ----
@@ -183,9 +186,7 @@ class MACEEngine:
             model = run_e3nn_to_cueq(model, device=str(self.device)).to(self.device)
         elif enable_oeq:
             if not OEQ_AVAILABLE:
-                raise ImportError(
-                    "openEquivariance is not installed. pip install openequivariance"
-                )
+                raise ImportError("openEquivariance is not installed. pip install openequivariance")
             logging.info("Converting model to OEq for acceleration")
             model = run_e3nn_to_oeq(model, device=str(self.device)).to(self.device)
 
@@ -223,8 +224,8 @@ class MACEEngine:
         # ---- MDI state ----
         self.natoms: int | None = None
         self.elements_np: np.ndarray | None = None
-        self.positions_np: np.ndarray | None = None   # Bohr (MDI units)
-        self.cell_np: np.ndarray | None = None        # Bohr
+        self.positions_np: np.ndarray | None = None  # Bohr (MDI units)
+        self.cell_np: np.ndarray | None = None  # Bohr
         self.periodic: bool = False
 
         # ---- Cached GPU tensors (reallocated when natoms/elements change) ----
@@ -248,17 +249,13 @@ class MACEEngine:
     def _init_persistent_tensors(self, natoms: int, elements: np.ndarray) -> None:
         """Allocate tensors that are constant across MD steps (node attributes, batch)."""
         indices = [self.z_to_index[int(z)] for z in elements]
-        one_hot = torch.zeros(
-            natoms, self.num_species, dtype=self.dtype, device=self.device
-        )
+        one_hot = torch.zeros(natoms, self.num_species, dtype=self.dtype, device=self.device)
         for i, idx in enumerate(indices):
             one_hot[i, idx] = 1.0
         self._node_attrs = one_hot
         self._batch = torch.zeros(natoms, dtype=torch.long, device=self.device)
         self._ptr = torch.tensor([0, natoms], dtype=torch.long, device=self.device)
-        self._head = torch.tensor(
-            [self.head_index], dtype=torch.long, device=self.device
-        )
+        self._head = torch.tensor([self.head_index], dtype=torch.long, device=self.device)
         self._num_graphs = torch.tensor(1, dtype=torch.long, device=self.device)
 
     def _build_graph_vesin(
@@ -320,20 +317,14 @@ class MACEEngine:
         # ---- Neighbor list ----
         t0 = time.perf_counter()
         if self.vesin_nl is not None:
-            positions_t = torch.tensor(
-                positions_ang, dtype=self.dtype, device=self.device
-            )
+            positions_t = torch.tensor(positions_ang, dtype=self.dtype, device=self.device)
             cell_t = torch.tensor(cell_ang, dtype=self.dtype, device=self.device)
-            edge_index, shifts, unit_shifts = self._build_graph_vesin(
-                positions_t, cell_t
-            )
+            edge_index, shifts, unit_shifts = self._build_graph_vesin(positions_t, cell_t)
         else:
             edge_index, shifts, unit_shifts = self._build_graph_cpu(
                 positions_ang, cell_ang, pbc=pbc
             )
-            positions_t = torch.tensor(
-                positions_ang, dtype=self.dtype, device=self.device
-            )
+            positions_t = torch.tensor(positions_ang, dtype=self.dtype, device=self.device)
             cell_t = torch.tensor(cell_ang, dtype=self.dtype, device=self.device)
         t1 = time.perf_counter()
 
@@ -360,15 +351,10 @@ class MACEEngine:
 
         # ---- Extract results, convert to MDI atomic units ----
         self.energy = out["energy"].detach().cpu().item() / Hartree
-        self.forces = (
-            out["forces"].detach().cpu().to(torch.float64).numpy()
-            / (Hartree / Bohr)
-        )
+        self.forces = out["forces"].detach().cpu().to(torch.float64).numpy() / (Hartree / Bohr)
         if out.get("stress") is not None:
-            self.stress = (
-                -out["stress"]
-                .detach().cpu().to(torch.float64).numpy().reshape(3, 3)
-                / (Hartree / Bohr**3)
+            self.stress = -out["stress"].detach().cpu().to(torch.float64).numpy().reshape(3, 3) / (
+                Hartree / Bohr**3
             )
         else:
             self.stress = None
@@ -377,10 +363,10 @@ class MACEEngine:
 
         # ---- Timing ----
         self._n_calc += 1
-        self._t_nlist   += t1 - t0
+        self._t_nlist += t1 - t0
         self._t_transfer += t2 - t1
-        self._t_model   += t3 - t2
-        self._t_total   += t_end - t_start
+        self._t_model += t3 - t2
+        self._t_total += t_end - t_start
 
         if self._n_calc % 100 == 0:
             n = self._n_calc
@@ -410,9 +396,15 @@ class MACEEngine:
 
         mdi.MDI_Register_Node("@DEFAULT")
         for cmd in [
-            ">NATOMS", ">COORDS", ">CELL", ">ELEMENTS",
-            "<ENERGY", "<FORCES", "<STRESS",
-            "SCF", "EXIT",
+            ">NATOMS",
+            ">COORDS",
+            ">CELL",
+            ">ELEMENTS",
+            "<ENERGY",
+            "<FORCES",
+            "<STRESS",
+            "SCF",
+            "EXIT",
         ]:
             mdi.MDI_Register_Command("@DEFAULT", cmd)
 
@@ -451,9 +443,7 @@ class MACEEngine:
 
             elif command == ">COORDS":
                 coords = mdi.MDI_Recv(3 * self.natoms, mdi.MDI_DOUBLE, comm)
-                self.positions_np = np.array(coords, dtype=np.float64).reshape(
-                    self.natoms, 3
-                )
+                self.positions_np = np.array(coords, dtype=np.float64).reshape(self.natoms, 3)
                 self._needs_calculation = True
 
             elif command == "<ENERGY":
@@ -466,9 +456,7 @@ class MACEEngine:
                 if self._needs_calculation:
                     self.calculate()
                     self._needs_calculation = False
-                mdi.MDI_Send(
-                    self.forces.flatten(), 3 * self.natoms, mdi.MDI_DOUBLE, comm
-                )
+                mdi.MDI_Send(self.forces.flatten(), 3 * self.natoms, mdi.MDI_DOUBLE, comm)
 
             elif command == "<STRESS":
                 if self._needs_calculation:
@@ -492,6 +480,7 @@ class MACEEngine:
 
         # Clean up GPU memory before MPI tears down
         import gc
+
         torch.cuda.synchronize()
         del self.model, self._node_attrs
         gc.collect()
@@ -501,6 +490,7 @@ class MACEEngine:
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def parse_args(argv=None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -520,14 +510,16 @@ Example:
 """,
     )
     parser.add_argument(
-        "-mdi", "--mdi",
+        "-mdi",
+        "--mdi",
         required=True,
         dest="mdi_args",
         metavar="MDI_STRING",
         help='MDI initialization string, e.g. "-role ENGINE -name MACE -method MPI"',
     )
     parser.add_argument(
-        "--model", "-m",
+        "--model",
+        "-m",
         default=None,
         metavar="PATH",
         help="Path to the MACE model file (overrides SEAMM_FF environment variable)",
