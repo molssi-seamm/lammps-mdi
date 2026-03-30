@@ -28,58 +28,106 @@ Authors: Paul Saxe, with assistance from Claude (Anthropic)
 License: MIT
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import os
 import sys
 import time
 
-import numpy as np
-import torch
-import mdi
-from mpi4py import MPI
 import pint
 
-os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
-
-# Unit conversion factors
+# Unit conversion factors — pint is a lightweight dep, safe at module level
 _ureg = pint.UnitRegistry()
 Bohr = _ureg.Quantity(1, "bohr").to("angstrom").magnitude  # Bohr -> Å
 Hartree = _ureg.Quantity(1, "hartree").to("eV").magnitude  # Hartree -> eV
 
-
 # ---------------------------------------------------------------------------
-# Optional neighbor list backends
+# Heavy runtime dependencies (torch, mdi, mpi4py, mace, numpy, vesin,
+# matscipy) are imported lazily inside _import_runtime_deps(), which is
+# called once by MACEEngine.__init__() and run().
+#
+# This keeps the module importable — and parse_args() usable — on any
+# machine, including CI runners and dev laptops without a GPU.
 # ---------------------------------------------------------------------------
+_runtime_imported = False
+np = None  # set by _import_runtime_deps()
+torch = None
+mdi = None
+MPI = None
+VESIN_AVAILABLE = False
+VesinNeighborList = None
+neighbour_list = None
+CUEQ_AVAILABLE = False
+OEQ_AVAILABLE = False
+run_e3nn_to_cueq = None
+run_e3nn_to_oeq = None
 
-try:
-    from vesin.torch import NeighborList as VesinNeighborList
 
-    VESIN_AVAILABLE = True
-except ImportError:
-    VESIN_AVAILABLE = False
+def _import_runtime_deps() -> None:
+    """Import all heavy dependencies the first time an engine is used.
 
-if not VESIN_AVAILABLE:
-    from matscipy.neighbours import neighbour_list
+    Raises ImportError with a clear message if a required dep is missing.
+    Optional deps (vesin, cuequivariance, openequivariance) set module-level
+    availability flags but do not raise.
+    """
+    global _runtime_imported
+    global np, torch, mdi, MPI
+    global VESIN_AVAILABLE, VesinNeighborList, neighbour_list
+    global CUEQ_AVAILABLE, OEQ_AVAILABLE, run_e3nn_to_cueq, run_e3nn_to_oeq
 
+    if _runtime_imported:
+        return
 
-# ---------------------------------------------------------------------------
-# Optional acceleration backends
-# ---------------------------------------------------------------------------
+    os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
-try:
-    from mace.cli.convert_e3nn_cueq import run as run_e3nn_to_cueq
+    # Required
+    import numpy as _np  # noqa: PLC0415
+    import torch as _torch  # noqa: PLC0415
+    import mdi as _mdi  # noqa: PLC0415
+    from mpi4py import MPI as _MPI  # noqa: PLC0415
 
-    CUEQ_AVAILABLE = True
-except (ImportError, ModuleNotFoundError):
-    CUEQ_AVAILABLE = False
+    np = _np
+    torch = _torch
+    mdi = _mdi
+    MPI = _MPI
 
-try:
-    from mace.cli.convert_e3nn_oeq import run as run_e3nn_to_oeq
+    # Optional: GPU neighbor lists
+    try:
+        from vesin.torch import NeighborList as _VNL  # noqa: PLC0415
 
-    OEQ_AVAILABLE = True
-except (ImportError, ModuleNotFoundError):
-    OEQ_AVAILABLE = False
+        VESIN_AVAILABLE = True
+        VesinNeighborList = _VNL
+        logging.info("vesin-torch available — using GPU neighbor lists")
+    except ImportError:
+        VESIN_AVAILABLE = False
+        logging.info("vesin-torch not available — using matscipy CPU neighbor lists")
+
+    if not VESIN_AVAILABLE:
+        from matscipy.neighbours import neighbour_list as _nl  # noqa: PLC0415
+
+        neighbour_list = _nl
+
+    # Optional: cuEquivariance
+    try:
+        from mace.cli.convert_e3nn_cueq import run as _cueq  # noqa: PLC0415
+
+        CUEQ_AVAILABLE = True
+        run_e3nn_to_cueq = _cueq
+    except (ImportError, ModuleNotFoundError):
+        CUEQ_AVAILABLE = False
+
+    # Optional: openEquivariance
+    try:
+        from mace.cli.convert_e3nn_oeq import run as _oeq  # noqa: PLC0415
+
+        OEQ_AVAILABLE = True
+        run_e3nn_to_oeq = _oeq
+    except (ImportError, ModuleNotFoundError):
+        OEQ_AVAILABLE = False
+
+    _runtime_imported = True
 
 
 # ---------------------------------------------------------------------------
@@ -164,6 +212,7 @@ class MACEEngine:
         enable_cueq: bool = False,
         enable_oeq: bool = False,
     ):
+        _import_runtime_deps()
         self.device = torch.device(device)
         self.dtype = torch.float32 if default_dtype == "float32" else torch.float64
 
@@ -392,6 +441,7 @@ class MACEEngine:
             The MDI initialization string, e.g.
             "-role ENGINE -name MACE -method MPI"
         """
+        _import_runtime_deps()
         mdi.MDI_Init(mdi_args, MPI.COMM_WORLD)
 
         mdi.MDI_Register_Node("@DEFAULT")

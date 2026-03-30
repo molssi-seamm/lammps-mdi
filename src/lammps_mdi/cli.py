@@ -10,7 +10,6 @@ install-torch   Print the correct pip install command for torch on this machine
 
 import argparse
 import importlib.resources
-import shutil
 import sys
 from pathlib import Path
 

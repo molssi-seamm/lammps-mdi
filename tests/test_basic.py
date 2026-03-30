@@ -13,8 +13,6 @@ Split into two groups:
 import subprocess
 import sys
 
-import pytest
-
 # ---------------------------------------------------------------------------
 # Lightweight tests — always run in CI
 # ---------------------------------------------------------------------------
@@ -32,15 +30,9 @@ def test_package_importable():
 
 def test_cuda_utils_importable():
     """cuda_utils has no heavy dependencies and should always import."""
-    from lammps_mdi.cuda_utils import (
-        detect_cuda_version,
-        recommend_torch_tag,
-        torch_install_command,
-        check_torch,
-        check_mdi,
-    )
+    from lammps_mdi import cuda_utils  # noqa: F401 — just confirm it imports cleanly
 
-    maj, min_ = detect_cuda_version()
+    maj, min_ = cuda_utils.detect_cuda_version()
     assert maj is None or isinstance(maj, int)
 
 
@@ -119,15 +111,14 @@ def test_cli_check_runs():
 
 
 # ---------------------------------------------------------------------------
-# Runtime tests — skipped automatically when heavy deps are absent
+# Tests that need the full runtime stack (torch, mdi, mpi4py).
+# Heavy imports are deferred inside MACEEngine.__init__() / run(), so
+# parse_args() and class inspection work without any GPU deps.
 # ---------------------------------------------------------------------------
-
-torch = pytest.importorskip("torch", reason="torch not installed — skipping GPU tests")
-mdi_mod = pytest.importorskip("mdi", reason="pymdi not installed — skipping MDI tests")
 
 
 def test_mace_mdi_parse_args():
-    """mace-mdi argparse must work when torch and mdi are available."""
+    """parse_args() must work without torch/mdi/mpi4py installed."""
     from lammps_mdi.mace_mdi import parse_args
 
     args = parse_args(["-mdi", "-role ENGINE -name MACE -method MPI"])
@@ -140,16 +131,19 @@ def test_mace_mdi_parse_args():
 
 
 def test_mace_engine_class_importable():
-    """MACEEngine class should be importable when torch/mdi are present."""
+    """MACEEngine class definition must be importable without heavy deps."""
     from lammps_mdi.mace_mdi import MACEEngine
 
     assert callable(MACEEngine)
 
 
-def test_check_torch_with_torch():
-    """check_torch() should detect the installed torch correctly."""
+def test_check_torch_reports_status():
+    """check_torch() must return a valid status dict regardless of torch presence."""
     from lammps_mdi.cuda_utils import check_torch
 
     info = check_torch()
-    assert info["installed"] is True
-    assert info["version"] is not None
+    assert "installed" in info
+    assert "cuda_available" in info
+    # If torch happens to be installed, version must be a non-empty string
+    if info["installed"]:
+        assert info["version"]
