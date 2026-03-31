@@ -89,25 +89,26 @@ print(torch_install_command(tag))
 Or simply run `nvidia-smi` and look for `CUDA Version: X.Y`, then pick the
 closest matching tag from the table below:
 
-| Driver CUDA ceiling | Use this wheel tag |
-|--------------------|--------------------|
-| ≥ 12.8             | `cu128`            |
-| ≥ 12.6             | `cu126`            |
-| ≥ 12.4             | `cu124`            |
-| ≥ 12.1             | `cu121`            |
-| ≥ 11.8             | `cu118`            |
+| Driver CUDA ceiling | Use this wheel tag | Notes |
+|--------------------|-------------------|-------|
+| ≥ 12.1             | `cu128`           | Recommended for all CUDA 12.x systems |
+| ≥ 11.8             | `cu118`           | CUDA 11.x systems only |
 
-Example for CUDA 12.2 (driver ceiling) — use cu121:
+Modern PyTorch wheels **bundle all their own CUDA runtime libraries**
+(`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`, etc.) and do not use the
+system CUDA installation at all.  A cu128 wheel works correctly on a
+system whose driver reports CUDA 12.2, because the driver ABI is stable
+across minor CUDA versions.
+
+This matters for compatibility with `cuequivariance-ops-torch-cu12`, which
+requires `nvidia-cublas-cu12 >= 12.5`.  The cu128 wheel bundles cublas 12.8;
+the cu121 wheel bundles cublas 12.1, which is too old.
+
+Example for any CUDA 12.x system (including CUDA 12.2 drivers):
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip install torch --index-url https://download.pytorch.org/whl/cu128
 ```
-
-> **Note on bundled CUDA**: modern PyTorch wheels bundle their own CUDA
-> runtime libraries (`nvidia-cuda-runtime-cu12`, etc.).  This means the
-> wheel's CUDA version can be slightly *newer* than the driver's reported
-> CUDA ceiling, as long as the driver version itself is compatible.
-> For CUDA 12.2 drivers the cu121 wheel works correctly.
 
 Verify:
 
@@ -119,6 +120,16 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 
 ## Step 5 — Install lammps-mdi
 
+> **Important — numpy version:** `mace-torch` will try to pull in numpy 2.x,
+> which would shadow the numpy provided by the HPC module stack (1.26.4 in
+> the EasyBuild environment) and potentially break the LAMMPS Python
+> interface and other compiled packages that were built against numpy 1.x.
+> The `lammps-mdi` package declares `numpy<2` as a constraint to prevent
+> this, but if you see numpy 2.x installed after the step below, fix it with:
+> ```bash
+> pip install "numpy==1.26.4"
+> ```
+
 ```bash
 # Recommended: with GPU-accelerated neighbor lists
 pip install lammps-mdi[gpu]
@@ -126,10 +137,17 @@ pip install lammps-mdi[gpu]
 # Or with cuEquivariance acceleration (base packages only):
 pip install lammps-mdi[gpu-full]
 
-# Then add the ops kernel matching your CUDA:
-pip install cuequivariance-ops-torch-cu12    # for CUDA 12.x
-# pip install cuequivariance-ops-torch-cu11  # for CUDA 11.x
+# Then add the ops kernel (requires cu128 torch — see torch install above):
+pip install --extra-index-url https://pypi.nvidia.com/ cuequivariance-ops-torch-cu12
 ```
+
+> **Note:** `cuequivariance-ops-torch-cu12` downloads libraries from
+> `https://pypi.nvidia.com/`.  On systems with SSL inspection you may need
+> to add `--trusted-host pypi.nvidia.com` to the command above.
+>
+> You may also see a message like *"Not uninstalling numpy... outside
+> environment"* during installation.  This is harmless — pip is correctly
+> recognising that numpy is owned by the module system and leaving it alone.
 
 Run the environment check:
 

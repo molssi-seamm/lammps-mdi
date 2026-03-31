@@ -39,11 +39,12 @@ def test_cuda_utils_importable():
 def test_recommend_torch_tag():
     from lammps_mdi.cuda_utils import recommend_torch_tag
 
+    # Any driver reporting CUDA 12.1+ gets cu128 — bundled CUDA runtime
+    # is newer than the driver ceiling but works via stable driver ABI.
     assert recommend_torch_tag(12, 8) == "cu128"
-    assert recommend_torch_tag(12, 6) == "cu126"
-    assert recommend_torch_tag(12, 4) == "cu124"
-    assert recommend_torch_tag(12, 2) == "cu121"  # 12.2 >= 12.1 minimum
-    assert recommend_torch_tag(12, 1) == "cu121"
+    assert recommend_torch_tag(12, 4) == "cu128"
+    assert recommend_torch_tag(12, 2) == "cu128"  # ChemAI: driver 12.2 -> cu128
+    assert recommend_torch_tag(12, 1) == "cu128"
     assert recommend_torch_tag(11, 8) == "cu118"
     assert recommend_torch_tag(11, 0) is None  # too old
 
