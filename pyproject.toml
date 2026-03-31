@@ -47,6 +47,10 @@ dependencies = [
     "pint>=0.20",
     "mace-torch>=0.3",
     "matscipy>=0.8",
+    # Prevent mace-torch from pulling in numpy 2.x, which would shadow the
+    # numpy provided by the HPC module stack (typically 1.x) and break the
+    # LAMMPS Python interface and other EasyBuild packages.
+    "numpy<2",
 ]
 
 [project.optional-dependencies]

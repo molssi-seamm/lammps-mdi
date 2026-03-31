@@ -120,6 +120,16 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 
 ## Step 5 — Install lammps-mdi
 
+> **Important — numpy version:** `mace-torch` will try to pull in numpy 2.x,
+> which would shadow the numpy provided by the HPC module stack (1.26.4 in
+> the EasyBuild environment) and potentially break the LAMMPS Python
+> interface and other compiled packages that were built against numpy 1.x.
+> The `lammps-mdi` package declares `numpy<2` as a constraint to prevent
+> this, but if you see numpy 2.x installed after the step below, fix it with:
+> ```bash
+> pip install "numpy==1.26.4"
+> ```
+
 ```bash
 # Recommended: with GPU-accelerated neighbor lists
 pip install lammps-mdi[gpu]
