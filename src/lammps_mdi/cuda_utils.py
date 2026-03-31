@@ -10,15 +10,32 @@ import subprocess
 import sys
 from typing import Optional
 
-# Map (cuda_major, cuda_minor_minimum) -> PyTorch wheel tag, newest first.
+# Map minimum driver CUDA version -> PyTorch wheel tag, newest first.
+#
+# IMPORTANT: Modern PyTorch wheels bundle ALL their CUDA runtime libraries
+# (cublas, cudnn, etc.) and do NOT use the system CUDA installation.
+# nvidia-smi reports the driver's CUDA ceiling, but in practice PyTorch
+# cu128 wheels work on drivers that report CUDA 12.2+, because the driver
+# ABI is backward compatible.
+#
+# The table below therefore maps the *minimum driver CUDA version needed to
+# run the wheel at all* — not the CUDA version the wheel was compiled for.
+# We recommend the newest wheel the driver can support, rather than the
+# most conservative match, so that bundled library versions (cublas etc.)
+# are as new as possible and compatible with packages like cuequivariance.
+#
+# Rule of thumb: any driver reporting CUDA >= 12.1 can run cu128 wheels,
+# because the bundled CUDA 12.8 runtime uses the stable driver ABI.
 # Update this table when new PyTorch CUDA builds are released.
 _CUDA_TO_TORCH_TAG = [
-    ((12, 8), "cu128"),
-    ((12, 6), "cu126"),
-    ((12, 4), "cu124"),
-    ((12, 1), "cu121"),
+    ((12, 1), "cu128"),  # cu128 works on any driver reporting CUDA 12.1+
     ((11, 8), "cu118"),
 ]
+
+# Minimum driver CUDA version required to run cuequivariance-ops-torch-cu12.
+# The ops kernel requires nvidia-cublas-cu12 >= 12.5, which is bundled with
+# cu128 torch wheels.  cu121 wheels bundle cublas 12.1 which is too old.
+CUEQ_OPS_MIN_TORCH_TAG = "cu128"
 
 TORCH_INDEX_BASE = "https://download.pytorch.org/whl"
 
@@ -26,10 +43,13 @@ TORCH_INDEX_BASE = "https://download.pytorch.org/whl"
 def detect_cuda_version() -> tuple[Optional[int], Optional[int]]:
     """Return the (major, minor) CUDA version from nvidia-smi, or (None, None).
 
-    nvidia-smi reports the *driver* CUDA version — the ceiling of what the
-    GPU driver supports.  PyTorch wheels bundle their own CUDA runtime, so
-    you can install a wheel for CUDA 12.4 even if the driver only reports 12.2,
-    as long as the bundled runtime is ≤ the driver ceiling.
+    nvidia-smi reports the *driver* CUDA ceiling — the maximum CUDA runtime
+    version the driver officially supports.  However, PyTorch wheels bundle
+    their own CUDA runtime libraries and do not use the system CUDA at all.
+    A cu128 wheel (bundling CUDA 12.8 runtime) will work correctly on a
+    driver that reports CUDA 12.2, because the driver ABI is stable across
+    minor CUDA versions.  The driver version is therefore a coarse floor,
+    not a tight ceiling, when choosing a PyTorch wheel.
     """
     try:
         result = subprocess.run(
@@ -56,10 +76,14 @@ def cuda_version_string() -> Optional[str]:
 
 
 def recommend_torch_tag(cuda_major: int, cuda_minor: int) -> Optional[str]:
-    """Return the best matching PyTorch wheel tag for the given CUDA version.
+    """Return the recommended PyTorch wheel tag for the given driver CUDA version.
 
-    Picks the highest CUDA tag whose minimum requirement is met by the driver.
-    Returns None if no compatible tag is found.
+    Recommends the newest wheel the driver can support, not the most
+    conservative match.  Since PyTorch bundles its own CUDA runtime, a newer
+    wheel tag does not require a newer system CUDA installation — it only
+    requires a driver new enough to support the stable CUDA driver ABI.
+
+    Returns None if the driver is too old for any supported wheel.
     """
     for (req_major, req_minor), tag in _CUDA_TO_TORCH_TAG:
         if (cuda_major, cuda_minor) >= (req_major, req_minor):
