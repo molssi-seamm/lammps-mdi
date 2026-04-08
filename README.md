@@ -32,30 +32,7 @@ The two processes communicate over MPI via the MDI protocol.
 
 ## Installation
 
-See [INSTALL.md](INSTALL.md) for full HPC instructions.  Short version:
-
-```bash
-# 1. Load your LAMMPS module (provides Python, numpy, mpi4py, MDI)
-module load LAMMPS/...
-
-# 2. Create a venv that inherits the module stack
-python -m venv --system-site-packages ~/venvs/lammps-mdi
-source ~/venvs/lammps-mdi/bin/activate
-
-# 3. Install PyTorch with the right CUDA wheel (check your CUDA version first)
-lammps-mdi install-torch    # prints the correct command
-# e.g.:
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-
-# 4. Install lammps-mdi
-pip install lammps-mdi[gpu]
-
-# 5. Install bundled shell scripts
-lammps-mdi install-scripts
-
-# 6. Verify
-lammps-mdi check
-```
+See [INSTALL_CONDA.md](INSTALL_CONDA.md) for full HPC instructions.
 
 ## Usage
 

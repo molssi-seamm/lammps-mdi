@@ -29,28 +29,25 @@ classifiers = [
 # -----------------------------------------------------------------------
 # Core dependencies
 #
-# Intentionally ABSENT (must be pre-installed by the user or module system):
+# Intentionally ABSENT (must be pre-installed by the environment):
 #   torch    — install with the correct CUDA wheel first; see INSTALL.md
 #   numpy    — provided by the HPC module stack; must not be overridden
 #   mpi4py   — provided by the HPC module stack
-#
-# pymdi is the PyPI name for the MDI Python bindings (import mdi).
-# It is listed here so pip can verify it is present, but on systems where
-# it is provided by an EasyBuild/Spack module the user can ignore the warning.
+#   pymdi    — MUST come from the same build as LAMMPS's MDI library.
+#              pymdi wheels bundle their own libmdi.so; installing pymdi
+#              into the venv gives a DIFFERENT libmdi.so than the one
+#              LAMMPS was compiled against, causing "Invalid communicator"
+#              MPI errors at runtime.  Use the EasyBuild/Spack pymdi only.
 # -----------------------------------------------------------------------
 dependencies = [
-    # pymdi is the PyPI package name; it installs as "import mdi" (not "import pymdi").
-    # Version is exposed as mdi.MDI_MAJOR_VERSION etc., not mdi.__version__.
-    # pymdi is the PyPI package name; it installs as "import mdi" (not "import pymdi").
-    # Version is exposed as mdi.MDI_MAJOR_VERSION etc., not mdi.__version__.
-    "pymdi>=1.4",
     "pint>=0.20",
     "mace-torch>=0.3",
     "matscipy>=0.8",
-    # Prevent mace-torch from pulling in numpy 2.x, which would shadow the
-    # numpy provided by the HPC module stack (typically 1.x) and break the
-    # LAMMPS Python interface and other EasyBuild packages.
-    "numpy<2",
+    # Prevent mace-torch from pulling in numpy 2.x in EasyBuild/module
+    # environments where LAMMPS was compiled against numpy 1.x.
+    # In pure conda environments (where everything targets numpy 2.x)
+    # you can restore numpy after install with: conda install numpy
+    # "numpy<2",
 ]
 
 [project.optional-dependencies]
