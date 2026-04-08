@@ -5,6 +5,7 @@ Used by the `lammps-mdi check` and `lammps-mdi install-torch` commands,
 and by the installation documentation generator.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -167,7 +168,7 @@ def print_environment_report() -> None:
 
     # CUDA (driver)
     cuda_maj, cuda_min = detect_cuda_version()
-    if cuda_maj is not None:
+    if cuda_maj is not None and cuda_min is not None:
         print(f"GPU:     CUDA driver {cuda_maj}.{cuda_min} detected via nvidia-smi")
         tag = recommend_torch_tag(cuda_maj, cuda_min)
         if tag:
@@ -192,10 +193,19 @@ def print_environment_report() -> None:
     # MDI
     m = check_mdi()
     if m["installed"]:
-        print(f"\npymdi:   {m['version']}  ({m['file']})")
+        mdi_file = m["file"] or ""
+        venv = os.environ.get("VIRTUAL_ENV", "")
+        in_venv = bool(venv and mdi_file.startswith(venv))
+        if in_venv:
+            print(f"\npymdi:   {m['version']}  ({mdi_file})")
+            print("         *** WARNING: venv copy detected — this WILL conflict with")
+            print("             the MDI library LAMMPS was compiled against.")
+            print("             Fix: pip uninstall pymdi")
+        else:
+            print(f"\npymdi:   {m['version']}  ({mdi_file})  OK")
     else:
         print("\npymdi:   NOT INSTALLED")
-        print("         pip install pymdi  OR load the MDI environment module")
+        print("         Load the MDI environment module (do NOT pip install pymdi)")
 
     # mace-torch
     try:

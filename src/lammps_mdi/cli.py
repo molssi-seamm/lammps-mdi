@@ -90,7 +90,7 @@ def cmd_install_torch(args) -> None:
     )
 
     major, minor = detect_cuda_version()
-    if major is None:
+    if major is None or minor is None:
         print("No GPU detected via nvidia-smi.")
         print("For CPU-only torch:")
         print("  pip install torch --index-url https://download.pytorch.org/whl/cpu")
