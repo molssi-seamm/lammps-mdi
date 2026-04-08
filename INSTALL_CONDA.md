@@ -23,9 +23,17 @@ nvidia-smi | grep "CUDA Version"
 ## Step 1 — Create the conda environment with LAMMPS
 
 ```bash
-conda create -n seamm-lammps -c conda-forge \
-    lammps pymdi mpi4py openmpi python=3.12
+# Let conda choose the MPI variant (usually OpenMPI by default):
+conda create -n seamm-lammps -c conda-forge lammps python=3.12
+
+# Or explicitly request the OpenMPI variant (recommended for reproducibility):
+conda create -n seamm-lammps -c conda-forge "lammps=*=*openmpi*" python=3.12
 ```
+
+`lammps` will automatically pull in `pymdi`, `mpi4py`, and OpenMPI as
+dependencies — no need to list them separately. Specifying `openmpi` as
+a separate package would not constrain the LAMMPS build variant and could
+result in a mismatched environment.
 
 > **Note on pymdi SafetyError:** You may see a message like:
 > ```
