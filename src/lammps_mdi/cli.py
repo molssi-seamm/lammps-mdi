@@ -36,6 +36,15 @@ _SCRIPTS = [
 ]
 
 
+def cmd_install_mdi(args) -> None:
+    from .install_mdi import install_mdi
+
+    install_mdi(
+        clone_dir=args.clone_dir,
+        keep_build=args.keep_build,
+    )
+
+
 def cmd_install_scripts(args) -> None:
     target = Path(args.dir).expanduser()
     target.mkdir(parents=True, exist_ok=True)
@@ -140,6 +149,31 @@ def main(argv=None) -> None:
     # check
     p_check = sub.add_parser("check", help="Report the runtime environment")
     p_check.set_defaults(func=cmd_check)
+
+    # install-mdi
+    p_mdi = sub.add_parser(
+        "install-mdi",
+        help="Build and install MDI_Library from source against the active MPI",
+        description=(
+            "The PyPI pymdi wheel links against system MPICH and will fail with OpenMPI.\n"
+            "conda-forge LAMMPS ships libmdi.so without MPI support.\n"
+            "This command builds MDI_Library from source using the active environment MPI,\n"
+            "then installs libmdi.so into all the right locations."
+        ),
+    )
+    p_mdi.add_argument(
+        "--clone-dir",
+        default=None,
+        metavar="DIR",
+        help="Directory to clone MDI_Library into (default: temporary directory)",
+    )
+    p_mdi.add_argument(
+        "--keep-build",
+        action="store_true",
+        default=False,
+        help="Keep the build directory after installation",
+    )
+    p_mdi.set_defaults(func=cmd_install_mdi)
 
     # install-scripts
     p_scripts = sub.add_parser(

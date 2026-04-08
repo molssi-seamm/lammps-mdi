@@ -68,7 +68,43 @@ Add this to your job script or `~/.bashrc` (after the `module load` line).
 
 ---
 
-## Step 4 — Install PyTorch with the correct CUDA wheel
+## Step 4 — Install MDI_Library from source
+
+> **Critical:** Do NOT use `pip install pymdi`. The PyPI wheel bundles
+> `libmdi.so` compiled against system MPICH. If your environment uses
+> OpenMPI (EasyBuild, conda-forge OpenMPI LAMMPS, etc.) this will cause
+> "Invalid communicator" MPI errors at runtime. conda-forge LAMMPS also
+> ships `lib/libmdi.so` compiled without MPI support at all, causing
+> "Failed to initialize MPI" errors. Both problems are fixed by building
+> MDI_Library from source against the active environment's MPI.
+
+```bash
+# Install build tools if needed
+pip install setuptools wheel cmake
+
+# Build and install MDI_Library from source
+lammps-mdi install-mdi
+```
+
+This command:
+1. Clones `https://github.com/MolSSI-MDI/MDI_Library`
+2. Builds it with `pip install . --no-build-isolation` so it uses the
+   active environment's MPI (not an isolated environment that would
+   find system MPICH)
+3. Copies `libmdi.so`, `libmdi.so.1`, and `mdi_name` into
+   `site-packages/mdi/` (for the Python engine)
+4. Copies `libmdi.so`, `libmdi.so.1` into `$CONDA_PREFIX/lib/` or
+   `$VIRTUAL_ENV/lib/` (replacing the MPI-less LAMMPS stub)
+
+Verify with:
+```bash
+lammps-mdi check
+# pymdi line should show the environment OpenMPI path, not /usr/local/lib/libmpi.so.12
+```
+
+---
+
+## Step 5 — Install PyTorch with the correct CUDA wheel
 
 PyTorch must be installed **before** lammps-mdi, because mace-torch depends
 on it and pip must find it already present to avoid pulling in a CPU-only
@@ -118,7 +154,7 @@ python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 
 ---
 
-## Step 5 — Install lammps-mdi
+## Step 6 — Install lammps-mdi
 
 > **Important — numpy version:** `mace-torch` will try to pull in numpy 2.x,
 > which would shadow the numpy provided by the HPC module stack (1.26.4 in
@@ -178,7 +214,7 @@ cueq:    0.9.x
 
 ---
 
-## Step 6 — Install shell scripts
+## Step 7 — Install shell scripts
 
 The package bundles `mdi_bind.sh`, `mdi_monitor.sh`, `cpu_bind.sh`, and
 `gpu_bind.sh`.  Install them to `~/SEAMM/bin` (or any directory in PATH):
@@ -190,7 +226,7 @@ lammps-mdi install-scripts --dir /opt/bin  # custom directory
 
 ---
 
-## Step 7 — Configure lammps.ini
+## Step 8 — Configure lammps.ini
 
 Set the `gpu-code` key in `lammps.ini` to use the installed scripts.
 For a standalone machine with one GPU:
