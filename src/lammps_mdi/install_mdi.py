@@ -164,8 +164,8 @@ def install_mdi(clone_dir: Path | None = None, keep_build: bool = False) -> None
                 sys.executable,
                 "-c",
                 """import mdi; print(
-                    f'  pymdi {mdi.MDI_MAJOR_VERSION}."
-                    f"{mdi.MDI_MINOR_VERSION}.{mdi.MDI_PATCH_VERSION} imported OK'
+                    f"  pymdi {mdi.MDI_MAJOR_VERSION}."
+                    f"{mdi.MDI_MINOR_VERSION}.{mdi.MDI_PATCH_VERSION} imported OK"
                 )""",
             ],
             capture_output=True,
