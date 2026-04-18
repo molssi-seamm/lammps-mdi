@@ -242,46 +242,39 @@ class MACEEngine:
         self.model = model
         self.r_max = float(model.r_max.cpu())
 
-        # After the CuEq/OEq conversion block, before requires_grad_(False):
+        # Atomic number -> one-hot index mapping
+        self.atomic_numbers = [int(z) for z in model.atomic_numbers]
+        self.z_to_index = {z: i for i, z in enumerate(self.atomic_numbers)}
+        self.num_species = len(self.atomic_numbers)
         num_params = sum(p.numel() for p in model.parameters())
         num_buffers = sum(b.numel() for b in model.buffers())
         model_dtype = next(model.parameters()).dtype
         bytes_per = torch.finfo(model_dtype).bits // 8
         weight_mb = num_params * bytes_per / (1024**2)
 
+        # Model stats straight from the loaded module
+        model_dtype = next(model.parameters()).dtype
+
+        try:
+            self.heads = list(model.heads)
+        except AttributeError:
+            self.heads = ["Default"]
+        self.head_index = 0
+
         logging.info(
-            f"Model loaded: r_max={self.r_max:.3f} Å, "
-            f"species={self.atomic_numbers}, heads={self.heads}, "
-            f"parameters={num_params:,} ({weight_mb:.1f} MB at {model_dtype}), "
-            f"buffers={num_buffers:,}, device={self.device}"
+            f"Model loaded:\n r_max={self.r_max:.3f} Å"
+            f"\nheads={self.heads}, "
+            f"\nspecies={self.atomic_numbers}"
+            f"\nheads={self.heads}"
+            f"\nparameters={num_params:,} ({weight_mb:.1f} MB at {model_dtype})"
+            f"\nbuffers={num_buffers:,}"
+            f"\ndevice={self.device}"
         )
 
         model.eval()
         for p in model.parameters():
             p.requires_grad_(False)
 
-        # Atomic number -> one-hot index mapping
-        self.atomic_numbers = [int(z) for z in model.atomic_numbers]
-        self.z_to_index = {z: i for i, z in enumerate(self.atomic_numbers)}
-        self.num_species = len(self.atomic_numbers)
-
-        try:
-            self.heads = list(model.heads)
-        except AttributeError:
-            self.heads = ["Default"]
-            self.head_index = 0
-
-            # Model stats straight from the loaded module
-            num_params = sum(p.numel() for p in model.parameters())
-            model_dtype = next(model.parameters()).dtype
-
-            logging.info(
-                f"Model loaded: r_max={self.r_max:.3f} Å, "
-                f"species={self.atomic_numbers}, "
-                f"heads={self.heads}, "
-                f"parameters={num_params:,}, "
-                f"dtype={model_dtype}, device={self.device}"
-            )
         if VESIN_AVAILABLE:
             logging.info("vesin-torch available — using GPU neighbor lists")
             self.vesin_nl = VesinNeighborList(cutoff=self.r_max, full_list=True)
