@@ -239,6 +239,9 @@ class MACEEngine:
             logging.info("Converting model to OEq for acceleration")
             model = run_e3nn_to_oeq(model, device=str(self.device)).to(self.device)
 
+        self.model = model
+        self.r_max = float(model.r_max.cpu())
+
         # After the CuEq/OEq conversion block, before requires_grad_(False):
         num_params = sum(p.numel() for p in model.parameters())
         num_buffers = sum(b.numel() for b in model.buffers())
@@ -256,9 +259,6 @@ class MACEEngine:
         model.eval()
         for p in model.parameters():
             p.requires_grad_(False)
-
-        self.model = model
-        self.r_max = float(model.r_max.cpu())
 
         # Atomic number -> one-hot index mapping
         self.atomic_numbers = [int(z) for z in model.atomic_numbers]
