@@ -239,6 +239,20 @@ class MACEEngine:
             logging.info("Converting model to OEq for acceleration")
             model = run_e3nn_to_oeq(model, device=str(self.device)).to(self.device)
 
+        # After the CuEq/OEq conversion block, before requires_grad_(False):
+        num_params = sum(p.numel() for p in model.parameters())
+        num_buffers = sum(b.numel() for b in model.buffers())
+        model_dtype = next(model.parameters()).dtype
+        bytes_per = torch.finfo(model_dtype).bits // 8
+        weight_mb = num_params * bytes_per / (1024**2)
+
+        logging.info(
+            f"Model loaded: r_max={self.r_max:.3f} Å, "
+            f"species={self.atomic_numbers}, heads={self.heads}, "
+            f"parameters={num_params:,} ({weight_mb:.1f} MB at {model_dtype}), "
+            f"buffers={num_buffers:,}, device={self.device}"
+        )
+
         model.eval()
         for p in model.parameters():
             p.requires_grad_(False)
@@ -255,14 +269,19 @@ class MACEEngine:
             self.heads = list(model.heads)
         except AttributeError:
             self.heads = ["Default"]
-        self.head_index = 0
+            self.head_index = 0
 
-        logging.info(
-            f"Model loaded: r_max={self.r_max:.3f} Å, "
-            f"species={self.atomic_numbers}, "
-            f"heads={self.heads}, "
-            f"dtype={self.dtype}, device={self.device}"
-        )
+            # Model stats straight from the loaded module
+            num_params = sum(p.numel() for p in model.parameters())
+            model_dtype = next(model.parameters()).dtype
+
+            logging.info(
+                f"Model loaded: r_max={self.r_max:.3f} Å, "
+                f"species={self.atomic_numbers}, "
+                f"heads={self.heads}, "
+                f"parameters={num_params:,}, "
+                f"dtype={model_dtype}, device={self.device}"
+            )
         if VESIN_AVAILABLE:
             logging.info("vesin-torch available — using GPU neighbor lists")
             self.vesin_nl = VesinNeighborList(cutoff=self.r_max, full_list=True)
@@ -417,7 +436,7 @@ class MACEEngine:
         self._t_model += t3 - t2
         self._t_total += t_end - t_start
 
-        if self._n_calc % 100 == 0:
+        if self._n_calc % 1000 == 0:
             n = self._n_calc
             logging.info(
                 f"Step {n}: "
