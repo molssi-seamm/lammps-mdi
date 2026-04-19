@@ -337,9 +337,7 @@ class MACEEngine:
             )
         except RuntimeError as e:
             if "max_pairs_per_point" in str(e) or "maximum capacity" in str(e):
-                current = int(
-                    os.environ.get("VESIN_CUDA_MAX_PAIRS_PER_POINT", 256)
-                )
+                current = int(os.environ.get("VESIN_CUDA_MAX_PAIRS_PER_POINT", 256))
                 suggested = current * 2
                 logging.error(
                     f"vesin-torch neighbor list overflow with {positions_t.shape[0]} atoms "
@@ -561,6 +559,7 @@ class MACEEngine:
 
         # Clean up GPU memory before MPI tears down
         import gc
+
         torch.cuda.synchronize()
         del self.model, self._node_attrs
         gc.collect()
@@ -664,9 +663,7 @@ def main(argv=None) -> None:
     # CLI arg takes precedence over any existing environment variable.
     if args.max_pairs_per_point is not None:
         os.environ["VESIN_CUDA_MAX_PAIRS_PER_POINT"] = str(args.max_pairs_per_point)
-        logging.info(
-            f"VESIN_CUDA_MAX_PAIRS_PER_POINT set to {args.max_pairs_per_point}"
-        )
+        logging.info(f"VESIN_CUDA_MAX_PAIRS_PER_POINT set to {args.max_pairs_per_point}")
 
     # Resolve model path: CLI arg > environment variable
     model_path = args.model or os.environ.get("SEAMM_FF")
