@@ -20,9 +20,12 @@ Usage (via mdi_bind.sh for CPU/GPU pinning on standalone machines)::
 
 Environment variables::
 
-    SEAMM_FF          Path to the MACE model file (.model or .pt)  [required]
-    SEAMM_DEVICE      PyTorch device override (default: cuda:0)
-    SEAMM_DTYPE       Model dtype: float32 or float64 (default: float32)
+    SEAMM_FF                        Path to the MACE model file (.model or .pt)  [required]
+    SEAMM_DEVICE                    PyTorch device override (default: cuda:0)
+    SEAMM_DTYPE                     Model dtype: float32 or float64 (default: float32)
+    VESIN_CUDA_MAX_PAIRS_PER_POINT  Max neighbor pairs per atom for vesin-torch GPU
+                                    neighbor lists (default: 256). Increase for large
+                                    systems or long cutoffs, e.g. 512 or 1024.
 
 Authors: Paul Saxe, with assistance from Claude (Anthropic)
 License: MIT
@@ -325,12 +328,28 @@ class MACEEngine:
         cell_t: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Build graph edges on GPU using vesin-torch."""
-        i, j, S, _ = self.vesin_nl.compute(
-            points=positions_t,
-            box=cell_t,
-            periodic=self.periodic,
-            quantities="ijSd",
-        )
+        try:
+            i, j, S, _ = self.vesin_nl.compute(
+                points=positions_t,
+                box=cell_t,
+                periodic=self.periodic,
+                quantities="ijSd",
+            )
+        except RuntimeError as e:
+            if "max_pairs_per_point" in str(e) or "maximum capacity" in str(e):
+                current = int(
+                    os.environ.get("VESIN_CUDA_MAX_PAIRS_PER_POINT", 256)
+                )
+                suggested = current * 2
+                logging.error(
+                    f"vesin-torch neighbor list overflow with {positions_t.shape[0]} atoms "
+                    f"and r_max={self.r_max:.2f} Å.\n"
+                    f"  Current VESIN_CUDA_MAX_PAIRS_PER_POINT = {current}\n"
+                    f"  Fix: export VESIN_CUDA_MAX_PAIRS_PER_POINT={suggested}\n"
+                    f"  Then rerun."
+                )
+                sys.exit(1)
+            raise
         # Remove zero-shift self-edges
         self_edge = (i == j) & (S == 0).all(dim=1)
         keep = ~self_edge
@@ -542,7 +561,6 @@ class MACEEngine:
 
         # Clean up GPU memory before MPI tears down
         import gc
-
         torch.cuda.synchronize()
         del self.model, self._node_attrs
         gc.collect()
@@ -561,9 +579,11 @@ def parse_args(argv=None) -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Environment variables:
-  SEAMM_FF      Path to the MACE model file (.model or .pt)  [required if --model not given]
-  SEAMM_DEVICE  PyTorch device override (default: cuda:0)
-  SEAMM_DTYPE   Model dtype: float32 or float64 (default: float32)
+  SEAMM_FF                        Path to the MACE model file (.model or .pt)  [required]
+  SEAMM_DEVICE                    PyTorch device override (default: cuda:0)
+  SEAMM_DTYPE                     Model dtype: float32 or float64 (default: float32)
+  VESIN_CUDA_MAX_PAIRS_PER_POINT  Max neighbor pairs per atom (default: 256).
+                                  Override via --max-pairs-per-point or this env var.
 
 Example:
   mpirun --mca mpi_yield_when_idle 1 \\
@@ -616,6 +636,17 @@ Example:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Logging verbosity (default: INFO)",
     )
+    parser.add_argument(
+        "--max-pairs-per-point",
+        default=None,
+        type=int,
+        metavar="N",
+        help=(
+            "Maximum neighbor pairs per atom for the vesin-torch GPU neighbor list "
+            "(sets VESIN_CUDA_MAX_PAIRS_PER_POINT). Default: 256. "
+            "Increase for large systems or long cutoffs, e.g. --max-pairs-per-point 512."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -628,6 +659,14 @@ def main(argv=None) -> None:
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%H:%M:%S",
     )
+
+    # Set VESIN_CUDA_MAX_PAIRS_PER_POINT before any imports that load vesin.
+    # CLI arg takes precedence over any existing environment variable.
+    if args.max_pairs_per_point is not None:
+        os.environ["VESIN_CUDA_MAX_PAIRS_PER_POINT"] = str(args.max_pairs_per_point)
+        logging.info(
+            f"VESIN_CUDA_MAX_PAIRS_PER_POINT set to {args.max_pairs_per_point}"
+        )
 
     # Resolve model path: CLI arg > environment variable
     model_path = args.model or os.environ.get("SEAMM_FF")
