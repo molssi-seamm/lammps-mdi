@@ -344,9 +344,12 @@ class MACEEngine:
                     f"and r_max={self.r_max:.2f} Å.\n"
                     f"  Current VESIN_CUDA_MAX_PAIRS_PER_POINT = {current}\n"
                     f"  Fix: export VESIN_CUDA_MAX_PAIRS_PER_POINT={suggested}\n"
+                    f"  Or:  mace-mdi --max-pairs-per-point {suggested} ...\n"
                     f"  Then rerun."
                 )
-                sys.exit(1)
+                # Abort the entire MPI job so LAMMPS does not hang
+                # waiting for a response that will never come.
+                MPI.COMM_WORLD.Abort(1)
             raise
         # Remove zero-shift self-edges
         self_edge = (i == j) & (S == 0).all(dim=1)
@@ -490,67 +493,74 @@ class MACEEngine:
         comm = mdi.MDI_Accept_Communicator()
         logging.info("MDI connection established")
 
-        while True:
-            command = mdi.MDI_Recv_Command(comm)
-            logging.debug(f"MDI command: {command}")
+        try:
+            while True:
+                command = mdi.MDI_Recv_Command(comm)
+                logging.debug(f"MDI command: {command}")
 
-            if command == "EXIT":
-                break
+                if command == "EXIT":
+                    break
 
-            elif command == ">NATOMS":
-                self.natoms = mdi.MDI_Recv(1, mdi.MDI_INT, comm)
+                elif command == ">NATOMS":
+                    self.natoms = mdi.MDI_Recv(1, mdi.MDI_INT, comm)
 
-            elif command == ">ELEMENTS":
-                elements = mdi.MDI_Recv(self.natoms, mdi.MDI_INT, comm)
-                self.elements_np = np.array(elements, dtype=np.int64)
-                self._init_persistent_tensors(self.natoms, self.elements_np)
-                logging.info(
-                    f"Received {self.natoms} atoms, "
-                    f"elements: {sorted(set(self.elements_np.tolist()))}"
-                )
-
-            elif command == ">CELL":
-                cell = mdi.MDI_Recv(9, mdi.MDI_DOUBLE, comm)
-                self.cell_np = np.array(cell, dtype=np.float64).reshape(3, 3)
-                if not self.periodic:
-                    self.periodic = True
-                    self._pbc = torch.tensor(
-                        [[True, True, True]], dtype=torch.bool, device=self.device
+                elif command == ">ELEMENTS":
+                    elements = mdi.MDI_Recv(self.natoms, mdi.MDI_INT, comm)
+                    self.elements_np = np.array(elements, dtype=np.int64)
+                    self._init_persistent_tensors(self.natoms, self.elements_np)
+                    logging.info(
+                        f"Received {self.natoms} atoms, "
+                        f"elements: {sorted(set(self.elements_np.tolist()))}"
                     )
-                    logging.info("Periodic system detected")
-                self._needs_calculation = True
 
-            elif command == ">COORDS":
-                coords = mdi.MDI_Recv(3 * self.natoms, mdi.MDI_DOUBLE, comm)
-                self.positions_np = np.array(coords, dtype=np.float64).reshape(self.natoms, 3)
-                self._needs_calculation = True
+                elif command == ">CELL":
+                    cell = mdi.MDI_Recv(9, mdi.MDI_DOUBLE, comm)
+                    self.cell_np = np.array(cell, dtype=np.float64).reshape(3, 3)
+                    if not self.periodic:
+                        self.periodic = True
+                        self._pbc = torch.tensor(
+                            [[True, True, True]], dtype=torch.bool, device=self.device
+                        )
+                        logging.info("Periodic system detected")
+                    self._needs_calculation = True
 
-            elif command == "<ENERGY":
-                if self._needs_calculation:
+                elif command == ">COORDS":
+                    coords = mdi.MDI_Recv(3 * self.natoms, mdi.MDI_DOUBLE, comm)
+                    self.positions_np = np.array(coords, dtype=np.float64).reshape(self.natoms, 3)
+                    self._needs_calculation = True
+
+                elif command == "<ENERGY":
+                    if self._needs_calculation:
+                        self.calculate()
+                        self._needs_calculation = False
+                    mdi.MDI_Send(self.energy, 1, mdi.MDI_DOUBLE, comm)
+
+                elif command == "<FORCES":
+                    if self._needs_calculation:
+                        self.calculate()
+                        self._needs_calculation = False
+                    mdi.MDI_Send(self.forces.flatten(), 3 * self.natoms, mdi.MDI_DOUBLE, comm)
+
+                elif command == "<STRESS":
+                    if self._needs_calculation:
+                        self.calculate()
+                        self._needs_calculation = False
+                    payload = self.stress if self.stress is not None else np.zeros(9)
+                    mdi.MDI_Send(payload.flatten(), 9, mdi.MDI_DOUBLE, comm)
+
+                elif command == "SCF":
                     self.calculate()
                     self._needs_calculation = False
-                mdi.MDI_Send(self.energy, 1, mdi.MDI_DOUBLE, comm)
 
-            elif command == "<FORCES":
-                if self._needs_calculation:
-                    self.calculate()
-                    self._needs_calculation = False
-                mdi.MDI_Send(self.forces.flatten(), 3 * self.natoms, mdi.MDI_DOUBLE, comm)
-
-            elif command == "<STRESS":
-                if self._needs_calculation:
-                    self.calculate()
-                    self._needs_calculation = False
-                payload = self.stress if self.stress is not None else np.zeros(9)
-                mdi.MDI_Send(payload.flatten(), 9, mdi.MDI_DOUBLE, comm)
-
-            elif command == "SCF":
-                self.calculate()
-                self._needs_calculation = False
-
-            else:
-                print(f"Error: unhandled MDI command '{command}'!", file=sys.stderr)
-                sys.exit(1)
+        except Exception as e:
+            # Any unhandled exception must abort the entire MPI job.
+            # Without this, LAMMPS will hang indefinitely waiting for
+            # a response that the now-dead engine can never send.
+            logging.error(
+                f"Fatal error in MDI engine: {type(e).__name__}: {e}\n"
+                "Aborting MPI job to prevent LAMMPS from hanging."
+            )
+            MPI.COMM_WORLD.Abort(1)
 
         logging.info(
             f"Engine finished. {self._n_calc} calculations, "
