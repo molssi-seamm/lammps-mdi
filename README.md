@@ -56,6 +56,14 @@ mace-mdi --help
   --dtype {float32,float64}
   --enable-cueq        Enable cuEquivariance acceleration
   --enable-oeq         Enable openEquivariance acceleration
+  --max-pairs-per-point N
+                       Neighbour-list capacity per point (default 256).
+                       Raise for dense systems or long cutoffs; the periodic
+                       timing line reports the largest value actually seen
+                       against this limit.
+  --profile-steps N    Profile the first N forward passes with torch.profiler
+                       and write a Chrome trace (chrome://tracing, or
+                       https://ui.perfetto.dev). Default 0 (disabled).
   --log-level LEVEL    DEBUG / INFO / WARNING / ERROR
 ```
 
