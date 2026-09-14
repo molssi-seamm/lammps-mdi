@@ -127,6 +127,19 @@ def cmd_install_torch(args) -> None:
 # ---------------------------------------------------------------------------
 
 
+def cmd_install_ml(args) -> None:
+    from .ml_install import install_ml
+
+    sys.exit(
+        install_ml(
+            dry_run=args.dry_run,
+            with_cueq=not args.no_cueq,
+            with_vesin=not args.no_vesin,
+            tag=args.tag,
+        )
+    )
+
+
 def cmd_version(args) -> None:
     from . import __version__
 
@@ -195,6 +208,41 @@ def main(argv=None) -> None:
         help="Print the correct pip install command for torch on this machine",
     )
     p_torch.set_defaults(func=cmd_install_torch)
+
+    p_ml = sub.add_parser(
+        "install-ml",
+        help="Install PyTorch and the MACE stack matched to this machine",
+        description=(
+            "Install the ML runtime: PyTorch built for this machine's NVIDIA driver, "
+            "then vesin, cuEquivariance and MACE. Run this in the LAMMPS environment, "
+            "not in a development environment."
+        ),
+    )
+    p_ml.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the plan without installing anything",
+    )
+    p_ml.add_argument(
+        "--no-cueq",
+        action="store_true",
+        help="Skip cuEquivariance (it is optional acceleration for MACE)",
+    )
+    p_ml.add_argument(
+        "--no-vesin",
+        action="store_true",
+        help="Skip vesin; MACE then uses the slower matscipy CPU neighbour lists",
+    )
+    p_ml.add_argument(
+        "--tag",
+        metavar="TAG",
+        help=(
+            "Force a PyTorch wheel tag (e.g. cu126, cu128, cpu) instead of the "
+            "one detected from the driver. A newer tag does not always offer a "
+            "newer torch for a given Python version."
+        ),
+    )
+    p_ml.set_defaults(func=cmd_install_ml)
 
     # version
     p_ver = sub.add_parser("version", help="Print the lammps-mdi version")
