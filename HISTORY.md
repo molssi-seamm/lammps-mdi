@@ -6,6 +6,29 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.10] — 2026-09-14
+
+### Added
+- `lammps-mdi install-ml` installs the ML runtime in one step: PyTorch built
+  for this machine's NVIDIA driver, then vesin, cuEquivariance and MACE.
+  Getting this right by hand is easy to get wrong in ways that fail late — a
+  `cu130` wheel on a CUDA 12.2 driver imports fine and only fails when
+  something first touches the GPU, and `pip install mace-torch` pulls torch
+  from PyPI, which is exactly how the wrong build arrives. Every step runs
+  with the CUDA-specific PyTorch index, and torch and vesin-torch are resolved
+  together so vesin's cap on torch is met from that index rather than by
+  silently substituting a PyPI build. `--dry-run` shows the plan, `--tag`
+  forces a wheel tag, and `--no-cueq` / `--no-vesin` skip the optional pieces.
+
+### Changed
+- `make install` installs the package alone, as CI already did, instead of
+  pulling the `gpu` extra. It was dragging torch, vesin-torch and MACE into
+  whichever environment happened to be active — including, via `make update`,
+  a SEAMM development environment as a side effect of making a release. The
+  runtime stack belongs in the LAMMPS environment; `install-ml` puts it there.
+
+---
+
 ## [0.1.9] — 2026-09-14
 
 ### Added
@@ -94,6 +117,7 @@ First public release.
 
 ---
 
+[0.1.10]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.10
 [0.1.9]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.9
 [0.1.0]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/v0.1.0
-[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.9...HEAD
+[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.10...HEAD

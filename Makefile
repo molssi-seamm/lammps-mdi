@@ -131,8 +131,26 @@ release: dist ## build and upload to PyPI
 # -----------------------------------------------------------------------
 # Install / uninstall (development)
 # -----------------------------------------------------------------------
-install: uninstall ## install the package (editable) into the active Python
-	pip install -e ".[gpu,dev]"
+
+# Environment lammps-mdi actually runs in (see `install` below).
+RUNTIME_ENV ?= seamm-lammps
+
+# lammps-mdi is runtime support for LAMMPS+MDI, not a library a development
+# environment needs: its real dependencies are torch, MACE and vesin, which are
+# multi-gigabyte and whose correct build depends on the machine's NVIDIA driver.
+# Those belong in the LAMMPS environment ($(RUNTIME_ENV)), installed with
+# `lammps-mdi install-ml`, which picks the wheel the driver can actually run.
+#
+# So `install` deliberately installs the package ALONE, matching what CI does
+# (.github/workflows/CI.yaml: `pip install --no-deps -e .` plus pint/matscipy).
+# The test suite never imports torch -- mace_mdi defers its heavy imports to
+# runtime -- so nothing here needs them.  Pulling the [gpu] extra in used to
+# drag torch into whatever environment happened to be active, which `make
+# update` then did to a SEAMM development environment as a side effect of a
+# release, breaking its test run on an unrelated torch/numpy clash.
+install: uninstall ## install the package alone (no runtime deps), as CI does
+	pip install --no-deps -e .
+	pip install pint matscipy
 
 uninstall: ## uninstall the package
 	pip uninstall --yes $(PACKAGE)

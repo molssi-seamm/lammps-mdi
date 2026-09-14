@@ -148,3 +148,70 @@ def test_check_torch_reports_status():
     # If torch happens to be installed, version must be a non-empty string
     if info["installed"]:
         assert info["version"]
+
+
+# ---------------------------------------------------------------------------
+# install-ml plan building
+# ---------------------------------------------------------------------------
+
+
+def test_cueq_ops_package_follows_wheel_tag():
+    """The ops kernels are built per CUDA major version, so follow the tag."""
+    from lammps_mdi.ml_install import cueq_ops_package
+
+    assert cueq_ops_package("cu118") == "cuequivariance-ops-torch-cu11"
+    assert cueq_ops_package("cu126") == "cuequivariance-ops-torch-cu12"
+    assert cueq_ops_package("cu128") == "cuequivariance-ops-torch-cu12"
+
+
+def _cuda_target(tag="cu126"):
+    from lammps_mdi.ml_install import TORCH_INDEX_BASE, Target
+
+    return Target(kind="cuda", tag=tag, index_url=f"{TORCH_INDEX_BASE}/{tag}", detail="test")
+
+
+def test_plan_resolves_torch_and_vesin_together():
+    """vesin-torch caps the torch version; resolving both at once keeps that
+    cap satisfied from the CUDA index instead of dragging torch off PyPI."""
+    from lammps_mdi.ml_install import build_plan
+
+    first = build_plan(_cuda_target())[0]
+    assert "torch" in first.args
+    assert "vesin" in first.args and "vesin-torch" in first.args
+
+
+def test_every_plan_step_pins_the_cuda_index():
+    """Nothing -- mace-torch above all -- may pull torch from plain PyPI."""
+    from lammps_mdi.ml_install import build_plan
+
+    for step in build_plan(_cuda_target()):
+        assert step.args[0] == "--index-url"
+        assert step.args[1].endswith("/cu126")
+        assert "--extra-index-url" in step.args
+
+
+def test_mace_is_installed_after_torch():
+    """mace-torch depends on torch, so torch must already be settled."""
+    from lammps_mdi.ml_install import build_plan
+
+    steps = build_plan(_cuda_target())
+    torch_at = next(i for i, s in enumerate(steps) if "torch" in s.args)
+    mace_at = next(i for i, s in enumerate(steps) if "mace-torch" in s.args)
+    assert torch_at < mace_at
+
+
+def test_cueq_only_on_cuda():
+    from lammps_mdi.ml_install import Target, build_plan
+
+    mac = Target(kind="mac", tag=None, index_url=None, detail="test")
+    assert not any("cuequivariance" in s.args for s in build_plan(mac))
+    assert any("cuequivariance" in s.args for s in build_plan(_cuda_target()))
+
+
+def test_cueq_and_vesin_can_be_skipped():
+    from lammps_mdi.ml_install import build_plan
+
+    steps = build_plan(_cuda_target(), with_cueq=False, with_vesin=False)
+    flat = [a for s in steps for a in s.args]
+    assert "vesin" not in flat and "cuequivariance" not in flat
+    assert "torch" in flat

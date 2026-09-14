@@ -45,6 +45,21 @@ mpirun --mca mpi_yield_when_idle 1 \
     : -np 1 mdi_bind.sh lmp -mdi "-role DRIVER -name LAMMPS -method MPI" -in input.dat
 ```
 
+Install the ML runtime (PyTorch, vesin, cuEquivariance, MACE) into the LAMMPS
+environment with:
+
+```
+lammps-mdi install-ml            # or --dry-run to see the plan first
+```
+
+It picks the PyTorch wheel from the machine's NVIDIA driver. A wheel built for
+a newer CUDA than the driver supports imports without complaint and then
+reports no GPU, so the first thing to touch the device fails far from the real
+cause; `install-ml` avoids that, and keeps `mace-torch` from pulling a
+different torch from PyPI. Use `--tag` to force a wheel tag, since the newest
+tag a driver supports does not always offer the newest torch for your Python
+version.
+
 The `mace-mdi` command accepts several options:
 
 ```
