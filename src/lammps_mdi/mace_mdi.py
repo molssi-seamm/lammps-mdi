@@ -811,14 +811,37 @@ def main(argv=None) -> None:
     device = args.device or os.environ.get("SEAMM_DEVICE", "cuda:0")
     dtype = args.dtype or os.environ.get("SEAMM_DTYPE", "float32")
 
-    engine = MACEEngine(
-        model_path=model_path,
-        device=device,
-        default_dtype=dtype,
-        enable_cueq=args.enable_cueq,
-        enable_oeq=args.enable_oeq,
-        profile_steps=args.profile_steps,
-    )
+    # Building the engine loads the model, and that is where a run is most
+    # likely to die: a model pickled against a module this environment does not
+    # have, a file that will not deserialise, a GPU with too little memory. The
+    # guard inside run() does not cover any of it, because MDI has not been
+    # initialised yet -- so the driver is left waiting for an engine that will
+    # never answer, and the job burns its whole wall-clock allocation before
+    # anyone sees the traceback. Abort the MPI job instead, the way run() does.
+    try:
+        engine = MACEEngine(
+            model_path=model_path,
+            device=device,
+            default_dtype=dtype,
+            enable_cueq=args.enable_cueq,
+            enable_oeq=args.enable_oeq,
+            profile_steps=args.profile_steps,
+        )
+    except Exception as e:
+        logging.error(
+            f"Fatal error building the MACE engine from '{model_path}': "
+            f"{type(e).__name__}: {e}\n"
+            "Aborting MPI job to prevent LAMMPS from hanging."
+        )
+        try:
+            from mpi4py import MPI as _MPI  # noqa: PLC0415
+
+            _MPI.COMM_WORLD.Abort(1)
+        except Exception:
+            # No MPI to abort through -- at least do not exit 0.
+            pass
+        sys.exit(1)
+
     engine.run(args.mdi_args)
 
 

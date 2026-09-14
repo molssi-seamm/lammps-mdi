@@ -6,6 +6,22 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.11] — 2026-09-14
+
+### Fixed
+- A failure while building the engine now aborts the MPI job instead of
+  hanging. Loading the model is where a run is most likely to die -- a model
+  pickled against a module the environment does not have, a file that will not
+  deserialise, a GPU with too little memory -- and none of it was covered by
+  the guard inside `run()`, because MDI has not been initialised that early.
+  LAMMPS was left waiting for an engine that would never answer, so the job
+  burned its whole wall-clock allocation before anyone saw the traceback. Seen
+  for real as `ModuleNotFoundError: No module named 'xnns'` from a model with
+  an unsatisfied dependency: the engine died, and the job sat allocated until
+  it was cancelled by hand. It now exits in seconds, naming the model path.
+
+---
+
 ## [0.1.10] — 2026-09-14
 
 ### Added
@@ -117,7 +133,8 @@ First public release.
 
 ---
 
+[0.1.11]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.11
 [0.1.10]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.10
 [0.1.9]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.9
 [0.1.0]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/v0.1.0
-[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.10...HEAD
+[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.11...HEAD
