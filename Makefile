@@ -163,3 +163,12 @@ git-init: ## initialise git, create first commit, and push to GitHub
 	@echo "  git checkout -b dev     # create a dev branch for day-to-day work"
 	@echo "  git push -u origin dev"
 	@echo "  # Then open a PR from dev -> main when ready for a release"
+
+.PHONY: update
+update: ## post-release: sync main and dev, reinstall, run checks, push dev
+	git checkout main
+	git pull
+	git checkout dev
+	git merge --ff-only main
+	$(MAKE) lint install test
+	git push

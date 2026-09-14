@@ -96,6 +96,10 @@ This command:
 4. Copies `libmdi.so`, `libmdi.so.1` into `$CONDA_PREFIX/lib/` or
    `$VIRTUAL_ENV/lib/` (replacing the MPI-less LAMMPS stub)
 
+On macOS the library is named `libmdi.dylib` / `libmdi.1.dylib` and its MPI
+linkage is inspected with `otool -L` rather than `ldd`; `install-mdi` picks
+the right names and tool for the platform, so the command is the same.
+
 Verify with:
 ```bash
 lammps-mdi check

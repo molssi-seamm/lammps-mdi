@@ -6,6 +6,46 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.9] — 2026-09-14
+
+### Added
+- `--profile-steps N` on `mace-mdi`: profiles the first N forward passes with
+  `torch.profiler` and writes a Chrome trace (view at `chrome://tracing` or
+  <https://ui.perfetto.dev>).
+- The periodic timing line now reports the largest pairs-per-atom seen against
+  the `VESIN_CUDA_MAX_PAIRS_PER_POINT` limit, so an undersized
+  `--max-pairs-per-point` is visible while the run is going rather than only
+  when it fails.
+- `lammps-mdi install-mdi` now works on macOS: it builds and inspects
+  `libmdi.dylib` with `otool`, instead of assuming `libmdi.so` and `ldd`.
+
+### Fixed
+- A MACE model saved on CUDA now loads on a machine with no usable GPU. Such
+  models carry e3nn JIT submodules whose `__setstate__` calls `torch.jit.load`
+  without a `map_location`, baking CUDA device references into the bytecode,
+  which the outer `torch.load(map_location="cpu")` never reached; loading died
+  with "Could not run 'aten::empty_strided' with CUDA backend".
+- `mdi_bind.sh` no longer reports failure after a successful run. Its engine
+  branch kills the `nvidia-smi` monitor it started, and the status of those
+  deliberate `kill`/`wait` calls became the script's own, so rank 0 exited 1
+  even when the engine finished cleanly and `mpirun` reported the whole run as
+  failed. A genuine failure in either branch still propagates.
+- An unhandled MDI command now aborts the MPI job instead of being ignored,
+  which left LAMMPS waiting for a reply that never came until its wall-clock
+  limit expired.
+- The engine runs on CPU and Apple MPS, not just CUDA: synchronisation and
+  cache teardown are dispatched per device, and vesin's GPU neighbour lists
+  are used only on CUDA, falling back to matscipy elsewhere.
+- Model timing is measured after synchronising the device. GPU work is
+  asynchronous, so the previous figure recorded when the kernel was *launched*
+  rather than when it finished; the time spent synchronising and extracting
+  results is now reported separately.
+
+### Note
+Releases 0.1.1 through 0.1.8 are not recorded in this file.
+
+---
+
 ## [0.1.0] — 2026-03-30
 
 First public release.
@@ -54,5 +94,6 @@ First public release.
 
 ---
 
+[0.1.9]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.9
 [0.1.0]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/v0.1.0
-[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.9...HEAD

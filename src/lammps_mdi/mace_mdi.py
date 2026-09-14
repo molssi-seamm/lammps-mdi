@@ -214,13 +214,38 @@ class MACEEngine:
         default_dtype: str = "float32",
         enable_cueq: bool = False,
         enable_oeq: bool = False,
+        profile_steps: int = 0,
     ):
         _import_runtime_deps()
+        self._max_pairs_seen = 0  # maximum number of pairs in neighborlist
+        self._profile_steps = profile_steps  # number of steps to profile (0 = disabled)
         self.device = torch.device(device)
         self.dtype = torch.float32 if default_dtype == "float32" else torch.float64
 
         # ---- Load model ----
-        model = torch.load(f=model_path, map_location=self.device, weights_only=False)
+        # Load model — always via CPU to handle e3nn JIT submodules.
+        #
+        # Models saved on CUDA contain e3nn JIT-compiled submodules whose
+        # __setstate__ calls torch.jit.load(buffer) without map_location,
+        # baking CUDA device references into the JIT bytecode.  This causes
+        # "Could not run 'aten::empty_strided' with CUDA backend" on CPU-only
+        # machines even when the outer torch.load uses map_location="cpu".
+        #
+        # Workaround: temporarily patch torch.jit.load to always use
+        # map_location="cpu", then move the loaded model to the target device.
+        _orig_jit_load = torch.jit.load
+
+        def _cpu_jit_load(f, *args, **kwargs):
+            kwargs["map_location"] = "cpu"
+            return _orig_jit_load(f, *args, **kwargs)
+
+        torch.jit.load = _cpu_jit_load
+        try:
+            model = torch.load(f=model_path, map_location="cpu", weights_only=False)
+        finally:
+            torch.jit.load = _orig_jit_load  # always restore, even on error
+
+        model = model.to(self.device)
 
         model_dtype = next(model.parameters()).dtype
         if model_dtype != self.dtype:
@@ -278,11 +303,14 @@ class MACEEngine:
         for p in model.parameters():
             p.requires_grad_(False)
 
-        if VESIN_AVAILABLE:
+        if VESIN_AVAILABLE and self.device.type == "cuda":
             logging.info("vesin-torch available — using GPU neighbor lists")
             self.vesin_nl = VesinNeighborList(cutoff=self.r_max, full_list=True)
         else:
-            logging.info("vesin-torch not available — using matscipy CPU neighbor lists")
+            if self.device.type != "cuda":
+                logging.info("CPU device — using matscipy CPU neighbor lists")
+            else:
+                logging.info("vesin-torch not available — using matscipy CPU neighbor lists")
             self.vesin_nl = None
 
         # ---- MDI state ----
@@ -308,7 +336,15 @@ class MACEEngine:
 
         # ---- Timing ----
         self._n_calc = 0
-        self._t_nlist = self._t_transfer = self._t_model = self._t_total = 0.0
+        self._t_nlist = self._t_transfer = self._t_model = self._t_sync = self._t_total = 0.0
+
+    def _sync_device(self) -> None:
+        """Synchronize the active device (CUDA or MPS) before CPU timing."""
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
+        elif self.device.type == "mps":
+            torch.mps.synchronize()
+        # CPU is always synchronous — no-op
 
     def _init_persistent_tensors(self, natoms: int, elements: np.ndarray) -> None:
         """Allocate tensors that are constant across MD steps (node attributes, batch)."""
@@ -327,27 +363,50 @@ class MACEEngine:
         positions_t: torch.Tensor,
         cell_t: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Build graph edges on GPU using vesin-torch."""
-        try:
-            i, j, S, _ = self.vesin_nl.compute(
-                points=positions_t,
-                box=cell_t,
-                periodic=self.periodic,
-                quantities="ijSd",
-            )
-        except RuntimeError as e:
-            if "max_pairs_per_point" in str(e) or "maximum capacity" in str(e):
+        """Build graph edges on GPU using vesin-torch.
+
+        Automatically doubles VESIN_CUDA_MAX_PAIRS_PER_POINT and retries
+        if the buffer overflows, up to max_retries attempts.  The memory
+        cost is small even at large values (192 MB at 2048 pairs for 3007
+        atoms on an A100), so retrying is always preferable to aborting.
+        """
+        max_retries = 4
+        for attempt in range(max_retries):
+            try:
+                i, j, S, _ = self.vesin_nl.compute(
+                    points=positions_t,
+                    box=cell_t,
+                    periodic=self.periodic,
+                    quantities="ijSd",
+                )
+                break  # success — exit retry loop
+            except RuntimeError as e:
+                if "max_pairs_per_point" not in str(e) and "maximum capacity" not in str(e):
+                    raise  # unrelated error — re-raise immediately
+
                 current = int(os.environ.get("VESIN_CUDA_MAX_PAIRS_PER_POINT", 256))
                 suggested = current * 2
-                logging.error(
-                    f"vesin-torch neighbor list overflow with {positions_t.shape[0]} atoms "
-                    f"and r_max={self.r_max:.2f} Å.\n"
-                    f"  Current VESIN_CUDA_MAX_PAIRS_PER_POINT = {current}\n"
-                    f"  Fix: export VESIN_CUDA_MAX_PAIRS_PER_POINT={suggested}\n"
-                    f"  Then rerun."
+
+                if attempt == max_retries - 1:
+                    logging.error(
+                        f"vesin-torch neighbor list overflow even at "
+                        f"VESIN_CUDA_MAX_PAIRS_PER_POINT={current} "
+                        f"({positions_t.shape[0]} atoms, r_max={self.r_max:.2f} Å). "
+                        f"Aborting MPI job."
+                    )
+                    MPI.COMM_WORLD.Abort(1)
+
+                logging.warning(
+                    f"vesin-torch neighbor list overflow at "
+                    f"VESIN_CUDA_MAX_PAIRS_PER_POINT={current} "
+                    f"({positions_t.shape[0]} atoms, r_max={self.r_max:.2f} Å). "
+                    f"Retrying with {suggested}."
                 )
-                sys.exit(1)
-            raise
+                os.environ["VESIN_CUDA_MAX_PAIRS_PER_POINT"] = str(suggested)
+                # vesin reads the env var at NeighborList construction time,
+                # so we must recreate the object to pick up the new value.
+                self.vesin_nl = VesinNeighborList(cutoff=self.r_max, full_list=True)
+
         # Remove zero-shift self-edges
         self_edge = (i == j) & (S == 0).all(dim=1)
         keep = ~self_edge
@@ -392,6 +451,22 @@ class MACEEngine:
         if self._pbc is None:
             self._pbc = torch.tensor([list(pbc)], dtype=torch.bool, device=self.device)
 
+        # ---- Wrap coordinates into the unit cell ----
+        # LAMMPS sends unwrapped coordinates — atoms that cross periodic
+        # boundaries retain positions outside [0, L].  vesin-torch requires
+        # wrapped coordinates; unwrapped positions cause spurious periodic
+        # images to be found, inflating the neighbor count over the course
+        # of a long MD run until the buffer overflows.
+        if self.periodic:
+            # For a general (possibly triclinic) cell:
+            #   fractional = positions @ inv(cell)
+            #   fractional %= 1.0   (wrap to [0, 1))
+            #   positions  = fractional @ cell
+            cell_inv = np.linalg.inv(cell_ang)
+            frac = positions_ang @ cell_inv
+            frac %= 1.0
+            positions_ang = frac @ cell_ang
+
         # ---- Neighbor list ----
         t0 = time.perf_counter()
         if self.vesin_nl is not None:
@@ -423,9 +498,33 @@ class MACEEngine:
         }
         t2 = time.perf_counter()
 
-        # ---- Forward pass ----
-        out = self.model(input_dict, compute_stress=compute_stress, training=False)
-        t3 = time.perf_counter()
+        # ---- Forward pass (with optional torch profiler) ----
+        # Profile a single step at self._profile_steps (0 = disabled).
+        # Step numbering: self._n_calc is 0 on the first call (incremented later).
+        # Set --profile-steps to e.g. 1000 to profile step 1000, after JIT warmup.
+        if self._profile_steps > 0 and self._n_calc == self._profile_steps:
+            from torch.profiler import ProfilerActivity, profile as torch_profile  # noqa: PLC0415
+
+            logging.info(f"Profiling forward pass at step {self._n_calc} ...")
+            with torch_profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                record_shapes=True,
+            ) as prof:
+                out = self.model(input_dict, compute_stress=compute_stress, training=False)
+                self._sync_device()
+            t3 = time.perf_counter()
+
+            logging.info("\n" + prof.key_averages().table(sort_by="cuda_time_total", row_limit=25))
+            trace_file = f"mace_mdi_trace_{self.natoms}atoms.json"
+            prof.export_chrome_trace(trace_file)
+            logging.info(f"Chrome trace written to {trace_file}")
+        else:
+            out = self.model(input_dict, compute_stress=compute_stress, training=False)
+
+            # Synchronize before timing — GPU ops are async so t3 without sync
+            # would record when the kernel was *launched*, not when it *finished*.
+            self._sync_device()
+            t3 = time.perf_counter()
 
         # ---- Extract results, convert to MDI atomic units ----
         self.energy = out["energy"].detach().cpu().item() / Hartree
@@ -437,24 +536,33 @@ class MACEEngine:
         else:
             self.stress = None
 
+        t4 = time.perf_counter()
         t_end = time.perf_counter()
+
+        # ---- Track max pairs per atom seen so far ----
+        max_pairs = int(torch.bincount(edge_index[0], minlength=self.natoms).max().item())
+        self._max_pairs_seen = max(self._max_pairs_seen, max_pairs)
 
         # ---- Timing ----
         self._n_calc += 1
         self._t_nlist += t1 - t0
         self._t_transfer += t2 - t1
         self._t_model += t3 - t2
+        self._t_sync += t4 - t3
         self._t_total += t_end - t_start
 
         if self._n_calc % 1000 == 0:
             n = self._n_calc
+            limit = int(os.environ.get("VESIN_CUDA_MAX_PAIRS_PER_POINT", 256))
             logging.info(
                 f"Step {n}: "
                 f"nlist={self._t_nlist/n*1e3:.1f} ms  "
                 f"transfer={self._t_transfer/n*1e3:.1f} ms  "
                 f"model={self._t_model/n*1e3:.1f} ms  "
+                f"sync+extract={self._t_sync/n*1e3:.1f} ms  "
                 f"total={self._t_total/n*1e3:.1f} ms  "
-                f"rate={self.natoms*n/self._t_total/1e3:.1f} katom-step/s"
+                f"rate={self.natoms*n/self._t_total/1e3:.1f} katom-step/s  "
+                f"max_pairs/atom={self._max_pairs_seen}/{limit}"
             )
 
     # -----------------------------------------------------------------------
@@ -490,67 +598,78 @@ class MACEEngine:
         comm = mdi.MDI_Accept_Communicator()
         logging.info("MDI connection established")
 
-        while True:
-            command = mdi.MDI_Recv_Command(comm)
-            logging.debug(f"MDI command: {command}")
+        try:
+            while True:
+                command = mdi.MDI_Recv_Command(comm)
+                logging.debug(f"MDI command: {command}")
 
-            if command == "EXIT":
-                break
+                if command == "EXIT":
+                    break
 
-            elif command == ">NATOMS":
-                self.natoms = mdi.MDI_Recv(1, mdi.MDI_INT, comm)
+                elif command == ">NATOMS":
+                    self.natoms = mdi.MDI_Recv(1, mdi.MDI_INT, comm)
 
-            elif command == ">ELEMENTS":
-                elements = mdi.MDI_Recv(self.natoms, mdi.MDI_INT, comm)
-                self.elements_np = np.array(elements, dtype=np.int64)
-                self._init_persistent_tensors(self.natoms, self.elements_np)
-                logging.info(
-                    f"Received {self.natoms} atoms, "
-                    f"elements: {sorted(set(self.elements_np.tolist()))}"
-                )
-
-            elif command == ">CELL":
-                cell = mdi.MDI_Recv(9, mdi.MDI_DOUBLE, comm)
-                self.cell_np = np.array(cell, dtype=np.float64).reshape(3, 3)
-                if not self.periodic:
-                    self.periodic = True
-                    self._pbc = torch.tensor(
-                        [[True, True, True]], dtype=torch.bool, device=self.device
+                elif command == ">ELEMENTS":
+                    elements = mdi.MDI_Recv(self.natoms, mdi.MDI_INT, comm)
+                    self.elements_np = np.array(elements, dtype=np.int64)
+                    self._init_persistent_tensors(self.natoms, self.elements_np)
+                    logging.info(
+                        f"Received {self.natoms} atoms, "
+                        f"elements: {sorted(set(self.elements_np.tolist()))}"
                     )
-                    logging.info("Periodic system detected")
-                self._needs_calculation = True
 
-            elif command == ">COORDS":
-                coords = mdi.MDI_Recv(3 * self.natoms, mdi.MDI_DOUBLE, comm)
-                self.positions_np = np.array(coords, dtype=np.float64).reshape(self.natoms, 3)
-                self._needs_calculation = True
+                elif command == ">CELL":
+                    cell = mdi.MDI_Recv(9, mdi.MDI_DOUBLE, comm)
+                    self.cell_np = np.array(cell, dtype=np.float64).reshape(3, 3)
+                    if not self.periodic:
+                        self.periodic = True
+                        self._pbc = torch.tensor(
+                            [[True, True, True]], dtype=torch.bool, device=self.device
+                        )
+                        logging.info("Periodic system detected")
+                    self._needs_calculation = True
 
-            elif command == "<ENERGY":
-                if self._needs_calculation:
+                elif command == ">COORDS":
+                    coords = mdi.MDI_Recv(3 * self.natoms, mdi.MDI_DOUBLE, comm)
+                    self.positions_np = np.array(coords, dtype=np.float64).reshape(self.natoms, 3)
+                    self._needs_calculation = True
+
+                elif command == "<ENERGY":
+                    if self._needs_calculation:
+                        self.calculate()
+                        self._needs_calculation = False
+                    mdi.MDI_Send(self.energy, 1, mdi.MDI_DOUBLE, comm)
+
+                elif command == "<FORCES":
+                    if self._needs_calculation:
+                        self.calculate()
+                        self._needs_calculation = False
+                    mdi.MDI_Send(self.forces.flatten(), 3 * self.natoms, mdi.MDI_DOUBLE, comm)
+
+                elif command == "<STRESS":
+                    if self._needs_calculation:
+                        self.calculate()
+                        self._needs_calculation = False
+                    payload = self.stress if self.stress is not None else np.zeros(9)
+                    mdi.MDI_Send(payload.flatten(), 9, mdi.MDI_DOUBLE, comm)
+
+                elif command == "SCF":
                     self.calculate()
                     self._needs_calculation = False
-                mdi.MDI_Send(self.energy, 1, mdi.MDI_DOUBLE, comm)
 
-            elif command == "<FORCES":
-                if self._needs_calculation:
-                    self.calculate()
-                    self._needs_calculation = False
-                mdi.MDI_Send(self.forces.flatten(), 3 * self.natoms, mdi.MDI_DOUBLE, comm)
+                else:
+                    logging.error(f"Unhandled MDI command '{command}' — aborting.")
+                    MPI.COMM_WORLD.Abort(1)
 
-            elif command == "<STRESS":
-                if self._needs_calculation:
-                    self.calculate()
-                    self._needs_calculation = False
-                payload = self.stress if self.stress is not None else np.zeros(9)
-                mdi.MDI_Send(payload.flatten(), 9, mdi.MDI_DOUBLE, comm)
-
-            elif command == "SCF":
-                self.calculate()
-                self._needs_calculation = False
-
-            else:
-                print(f"Error: unhandled MDI command '{command}'!", file=sys.stderr)
-                sys.exit(1)
+        except Exception as e:
+            # Any unhandled exception must abort the entire MPI job.
+            # Without this, LAMMPS will hang indefinitely waiting for
+            # a response that the now-dead engine can never send.
+            logging.error(
+                f"Fatal error in MDI engine: {type(e).__name__}: {e}\n"
+                "Aborting MPI job to prevent LAMMPS from hanging."
+            )
+            MPI.COMM_WORLD.Abort(1)
 
         logging.info(
             f"Engine finished. {self._n_calc} calculations, "
@@ -560,10 +679,13 @@ class MACEEngine:
         # Clean up GPU memory before MPI tears down
         import gc
 
-        torch.cuda.synchronize()
+        self._sync_device()
         del self.model, self._node_attrs
         gc.collect()
-        torch.cuda.empty_cache()
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+        elif self.device.type == "mps":
+            torch.mps.empty_cache()
 
 
 # ---------------------------------------------------------------------------
@@ -646,6 +768,17 @@ Example:
             "Increase for large systems or long cutoffs, e.g. --max-pairs-per-point 512."
         ),
     )
+    parser.add_argument(
+        "--profile-steps",
+        default=0,
+        type=int,
+        metavar="N",
+        help=(
+            "Profile the MACE forward pass for the first N steps using torch.profiler "
+            "and write a Chrome trace file (mace_mdi_trace_Natoms.json). "
+            "View at chrome://tracing or https://ui.perfetto.dev. Default: 0 (disabled)."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -684,6 +817,7 @@ def main(argv=None) -> None:
         default_dtype=dtype,
         enable_cueq=args.enable_cueq,
         enable_oeq=args.enable_oeq,
+        profile_steps=args.profile_steps,
     )
     engine.run(args.mdi_args)
 

@@ -118,16 +118,23 @@ def install_mdi(clone_dir: Path | None = None, keep_build: bool = False) -> None
         )
 
         # ---- Find build artefacts ----
-        # pip builds into build/lib.*/ — find the libmdi files there
+        # Library extension is platform-dependent
+        import platform  # noqa: PLC0415
+
+        is_macos = platform.system() == "Darwin"
+        lib_ext = ".dylib" if is_macos else ".so"
+        lib_name = f"libmdi{lib_ext}"
+        lib_name_v = f"libmdi.1{lib_ext}" if is_macos else "libmdi.so.1"
+
         build_lib = None
         for candidate in sorted(clone_dir.glob("build/lib.*")):
-            if (candidate / "libmdi.so").exists():
+            if (candidate / lib_name).exists():
                 build_lib = candidate
                 break
 
         if build_lib is None:
             print(
-                "\nError: could not find libmdi.so in build/ directory.\n"
+                f"\nError: could not find {lib_name} in build/ directory.\n"
                 "The build may have failed silently. Check the output above.",
                 file=sys.stderr,
             )
@@ -138,7 +145,7 @@ def install_mdi(clone_dir: Path | None = None, keep_build: bool = False) -> None
         # ---- Install into site-packages/mdi/ ----
         print(f"\nInstalling into {mdi_pkg_dir} ...")
         mdi_pkg_dir.mkdir(exist_ok=True)
-        for fname in ["libmdi.so", "libmdi.so.1", "mdi_name"]:
+        for fname in [lib_name, lib_name_v, "mdi_name"]:
             src = build_lib / fname
             if src.exists():
                 dst = mdi_pkg_dir / fname
@@ -150,7 +157,7 @@ def install_mdi(clone_dir: Path | None = None, keep_build: bool = False) -> None
         # ---- Install into env lib/ (replaces MPI-less LAMMPS stub) ----
         if env_lib is not None:
             print(f"\nInstalling into {env_lib} (replaces MPI-less LAMMPS stub) ...")
-            for fname in ["libmdi.so", "libmdi.so.1"]:
+            for fname in [lib_name, lib_name_v]:
                 src = build_lib / fname
                 if src.exists():
                     dst = env_lib / fname
@@ -178,18 +185,23 @@ def install_mdi(clone_dir: Path | None = None, keep_build: bool = False) -> None
             print(result.stderr, file=sys.stderr)
             sys.exit(1)
 
-        # Check libmdi.so links against the right MPI
-        ldd_result = subprocess.run(
-            ["ldd", str(mdi_pkg_dir / "libmdi.so")],
-            capture_output=True,
-            text=True,
-        )
-        mpi_lines = [tmp for tmp in ldd_result.stdout.splitlines() if "libmpi" in tmp]
+        # Check libmdi links against the right MPI
+        # Use otool on macOS, ldd on Linux
+        lib_path = mdi_pkg_dir / lib_name
+        if is_macos:
+            link_result = subprocess.run(
+                ["otool", "-L", str(lib_path)], capture_output=True, text=True
+            )
+            mpi_lines = [line for line in link_result.stdout.splitlines() if "mpi" in line.lower()]
+        else:
+            link_result = subprocess.run(["ldd", str(lib_path)], capture_output=True, text=True)
+            mpi_lines = [line for line in link_result.stdout.splitlines() if "libmpi" in line]
+
         if mpi_lines:
-            print(f"  libmdi.so MPI: {mpi_lines[0].strip()}")
+            print(f"  {lib_name} MPI: {mpi_lines[0].strip()}")
             if "/usr/local/lib/libmpi" in mpi_lines[0]:
                 print(
-                    "\n  WARNING: libmdi.so still links against system MPICH!",
+                    f"\n  WARNING: {lib_name} still links against system MPICH!",
                     file=sys.stderr,
                 )
                 print(
@@ -201,7 +213,7 @@ def install_mdi(clone_dir: Path | None = None, keep_build: bool = False) -> None
                     file=sys.stderr,
                 )
         else:
-            print("  Warning: libmdi.so does not appear to link against any MPI library.")
+            print(f"  Warning: {lib_name} does not appear to link against any MPI library.")
 
         print("\n=== MDI_Library installation complete ===\n")
 
