@@ -6,6 +6,21 @@ Versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.1.12] — 2026-09-15
+
+### Fixed
+- `mdi_bind.sh` no longer puts two concurrent jobs on the same cores. It picks
+  the cores for the engine and the driver from a map of the machine's GPUs, so
+  that each runs near its card, but looked that map up by the GPU's index
+  *within the job's own allocation* — which is 0 for every job given a single
+  GPU, whichever card it holds. Two jobs running at once therefore both took
+  GPU 0's cores and shared them, at about half a CPU each rather than one
+  each, even though the scheduler had correctly given them different cards. It
+  now looks up by the physical index, which is what the map is written in
+  terms of. A job with no scheduler allocation is unchanged.
+
+---
+
 ## [0.1.11] — 2026-09-14
 
 ### Fixed
@@ -133,8 +148,9 @@ First public release.
 
 ---
 
+[0.1.12]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.12
 [0.1.11]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.11
 [0.1.10]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.10
 [0.1.9]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/0.1.9
 [0.1.0]: https://github.com/molssi-seamm/lammps-mdi/releases/tag/v0.1.0
-[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.11...HEAD
+[Unreleased]: https://github.com/molssi-seamm/lammps-mdi/compare/0.1.12...HEAD
